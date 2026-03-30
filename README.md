@@ -25,6 +25,9 @@
 | 🔑 **API Keys** | Per-user API keys for automation |
 | 📤 **Import / Export** | Bulk operations in JSON and CSV |
 | 📖 **Swagger Docs** | Full interactive API documentation at `/docs` |
+| 📡 **Fritz!Box Integration** | Auto mesh topology from Fritz!Box netDev API |
+| 🗺️ **CI Relationship Map** | ReactFlow mini-map on each CI detail page |
+| 🧭 **Discovery Indicator** | Spinning compass in header when a scan is running |
 
 ---
 
@@ -115,6 +118,14 @@ GET /api/now/table/cmdb_ci?sysparm_limit=10&sysparm_query=status=active
 POST /api/now/table/cmdb_ci_server
 ```
 
+### Fritz!Box & Relationship Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/v1/fritz/sync/netdev` | Sync mesh topology from Fritz!Box netDev API |
+| `POST /api/v1/fritz/sync/hosts` | Sync known hosts / DHCP leases from Fritz!Box |
+| `POST /api/v1/relationships/cleanup` | Remove stale or orphaned CI relationships |
+
 ---
 
 ## 🏗️ Architecture
@@ -167,6 +178,35 @@ Discovery uses **nmap** to scan your network range and:
 
 ---
 
+## 🔌 Fritz!Box Integration
+
+Discovery CMDB can automatically build a **mesh topology** of your home network by querying your Fritz!Box router's internal `data.lua?page=netDev` API.
+
+### How it works
+
+- Authenticates via **SID** (Session ID) using the Fritz!Box login challenge/response flow
+- Calls `data.lua?page=netDev` to retrieve all connected devices and their mesh relationships
+- Maps the resulting topology: **device → repeater → Fritz!Box**
+- Creates or updates CIs for each discovered device
+- Automatically creates `connects_to` relationships to represent the mesh hierarchy
+
+### Sync behaviour
+
+- Runs **automatically** after each nmap discovery scan completes
+- Can also be triggered manually from the **Fritz!Box** settings page in the UI
+- Host/DHCP lease sync is available separately via `POST /api/v1/fritz/sync/hosts`
+
+### Configuration
+
+Set the following variables in your `.env`:
+
+| Variable | Example | Description |
+|---|---|---|
+| `FRITZ_HOST` | `192.168.178.1` | Fritz!Box IP address |
+| `FRITZ_PASSWORD` | `your_password` | Fritz!Box login password |
+
+---
+
 ## 👥 User Roles
 
 | Role | Permissions |
@@ -184,6 +224,8 @@ Discovery uses **nmap** to scan your network range and:
 ## 🔗 Relationship Types
 
 `depends_on` · `connects_to` · `hosted_on` · `runs_on` · `part_of` · `backs_up_to` · `replicates_to` · `monitors`
+
+> **Note:** `connects_to` relationships are created automatically by the Fritz!Box netDev sync to represent mesh topology links between devices.
 
 ---
 

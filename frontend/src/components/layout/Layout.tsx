@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Compass, Wifi } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 import Sidebar from './Sidebar';
 import client from '../../api/client';
 
@@ -13,22 +14,52 @@ function TopBar() {
   });
 
   const running = status?.running === true;
+  const completedAt: string | undefined = status?.completed_at;
+
+  const lastScanLabel = (() => {
+    if (!completedAt) return null;
+    try {
+      return `Last scan: ${formatDistanceToNow(new Date(completedAt), { addSuffix: true })}`;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <header className="h-11 flex items-center justify-between px-5 border-b border-slate-800/80 bg-slate-950/60 backdrop-blur-sm flex-shrink-0">
+      {/* Left: subnet info */}
       <div className="flex items-center gap-2">
         <Wifi className="w-3.5 h-3.5 text-slate-600" />
         <span className="text-xs text-slate-600 font-mono">192.168.178.0/24</span>
       </div>
+
+      {/* Right: status indicators + version */}
       <div className="flex items-center gap-4">
-        {running && (
+        {/* Discovery running indicator OR live dot */}
+        {running ? (
           <div className="flex items-center gap-2 text-blue-400 text-xs font-medium animate-fade-in">
             <Compass className="w-3.5 h-3.5 animate-spin" style={{ animationDuration: '2s' }} />
-            <span>Discovery läuft...</span>
+            <span>Discovery running...</span>
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
           </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Live</span>
+          </div>
         )}
-        <span className="text-[10px] text-slate-700 font-mono">Discovery CMDB v1.0</span>
+
+        {/* Last scan time */}
+        {lastScanLabel && (
+          <span className="text-[10px] text-slate-600 font-mono hidden sm:inline">
+            {lastScanLabel}
+          </span>
+        )}
+
+        {/* Version label — pushed further right by the gap */}
+        <span className="text-[10px] text-slate-700 font-mono pl-2 border-l border-slate-800">
+          Discovery CMDB v1.0
+        </span>
       </div>
     </header>
   );
