@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cmdb-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cmdb}
+      POSTGRES_USER: ${POSTGRES_USER:-cmdb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cmdb_secret_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cmdb} -d ${POSTGRES_DB:-cmdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cmdb-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cmdb-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cmdb}:${POSTGRES_PASSWORD:-cmdb_secret_change_me}@db:5432/${POSTGRES_DB:-cmdb}
+      SECRET_KEY: ${SECRET_KEY:-change_this_super_secret_key_in_production_please}
+      NETWORK_RANGE: ${NETWORK_RANGE:-192.168.178.0/24}
+      DISCOVERY_INTERVAL_MINUTES: ${DISCOVERY_INTERVAL_MINUTES:-60}
+      HEALTH_CHECK_INTERVAL_MINUTES: ${HEALTH_CHECK_INTERVAL_MINUTES:-5}
+      AUTO_DISCOVERY_ENABLED: ${AUTO_DISCOVERY_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["*"]}
+      SETUP_COMPLETED: ${SETUP_COMPLETED:-false}
+      SEED_SAMPLE_DATA: ${SEED_SAMPLE_DATA:-true}
+    volumes:
+      - ./backend/data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - cmdb-net
+    # Run with host network capabilities for nmap discovery
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cmdb-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8085}:80"
+    depends_on:
+      - backend
+    networks:
+      - cmdb-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  cmdb-net:
+    driver: bridge
