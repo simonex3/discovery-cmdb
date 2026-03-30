@@ -78,3 +78,13 @@ def delete_relationship(rel_id: uuid.UUID, db: Session = Depends(get_db), _: Use
         raise HTTPException(status_code=404, detail="Relationship not found")
     db.delete(rel)
     db.commit()
+
+
+@router.post("/cleanup", summary="Delete all relationships except runs_on")
+def cleanup_relationships(db: Session = Depends(get_db), _: User = Depends(require_operator)):
+    """Delete all relationships except runs_on type."""
+    q = db.query(Relationship).filter(Relationship.relationship_type != "runs_on")
+    deleted = q.count()
+    q.delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": deleted, "kept": "runs_on relationships preserved"}

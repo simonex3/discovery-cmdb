@@ -409,10 +409,15 @@ class DiscoveryService:
             })
             try:
                 _apply_relationship_hints(db, actor=actor)
-                from app.services.fritzbox import FritzBoxService
-                FritzBoxService.from_settings(db).sync_mesh(db, actor=actor)
             except Exception as e:
                 logger.warning(f"Failed applying relationship hints: {e}")
+            try:
+                from app.services.fritzbox import FritzBoxService
+                svc = FritzBoxService.from_settings(db)
+                if svc.enabled and svc.host:
+                    svc.sync_netdev(db, actor=actor)
+            except Exception as e:
+                logger.warning(f"Fritz!Box netdev auto-sync after discovery failed: {e}")
             logger.info(f"Discovery complete: {result}")
 
         return result

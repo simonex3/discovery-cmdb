@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork } from 'lucide-react';
 import client from '../api/client';
 import type { CI, Relationship, DependencyTree } from '../types';
 import { healthBadge, statusBadge } from '../components/ui/Badge';
 import StatusDot from '../components/ui/StatusDot';
+import RelationshipMap from '../components/ci/RelationshipMap';
 
 const TYPES = ['server','router','switch','access_point','firewall','nas','vm','container','service','database','desktop','laptop','mobile','iot','printer','other'];
 const STATUSES = ['active','inactive','maintenance','retired'];
@@ -374,33 +375,55 @@ export default function CIDetail() {
         </div>
       </div>
 
+      {!isNew && relationships && relationships.length > 0 && (
+        <div className="card space-y-3">
+          <h3 className="section-title flex items-center gap-2">
+            <GitFork className="w-3.5 h-3.5" /> Relationship Map
+            <span className="ml-auto text-slate-600 normal-case font-normal text-xs">
+              {relationships.length} connection{relationships.length !== 1 ? 's' : ''} — click to navigate
+            </span>
+          </h3>
+          {ci && <RelationshipMap ci={ci} relationships={relationships} />}
+        </div>
+      )}
+
       {!isNew && (
         <div className="card space-y-4">
-          <h3 className="text-sm font-semibold text-slate-300">Dependency View</h3>
+          <h3 className="section-title">Dependency Details</h3>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
-              <p className="text-xs text-slate-500 mb-2">Upstream (depends on this CI)</p>
-              <div className="space-y-2">
+              <p className="text-xs text-slate-500 mb-2">← Upstream (hängen von diesem CI ab)</p>
+              <div className="space-y-1.5">
                 {deps?.upstream?.length ? deps.upstream.map(d => (
-                  <div key={d.ci.id} className="p-2 rounded-lg bg-slate-800/50 border border-slate-700/50">
-                    <div className="text-sm text-slate-200">{d.ci.name}</div>
-                    <div className="text-xs text-slate-500">{d.relationship_type} · {d.ci.ip_address || d.ci.ci_type}</div>
+                  <div key={d.ci.id}
+                    className="p-2.5 rounded-lg bg-slate-800/40 border border-slate-700/40 hover:border-slate-600/60 cursor-pointer transition-all"
+                    onClick={() => navigate(`/inventory/${d.ci.id}`)}>
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-slate-200 font-medium">{d.ci.name}</div>
+                      <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">{d.relationship_type.replace(/_/g,' ')}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">{d.ci.ip_address || d.ci.ci_type}</div>
                   </div>
                 )) : (
-                  <p className="text-slate-500 text-sm">None</p>
+                  <p className="text-slate-600 text-sm py-2">None</p>
                 )}
               </div>
             </div>
             <div>
-              <p className="text-xs text-slate-500 mb-2">Downstream (this CI depends on)</p>
-              <div className="space-y-2">
+              <p className="text-xs text-slate-500 mb-2">→ Downstream (dieses CI hängt ab von)</p>
+              <div className="space-y-1.5">
                 {deps?.downstream?.length ? deps.downstream.map(d => (
-                  <div key={d.ci.id} className="p-2 rounded-lg bg-slate-800/50 border border-slate-700/50">
-                    <div className="text-sm text-slate-200">{d.ci.name}</div>
-                    <div className="text-xs text-slate-500">{d.relationship_type} · {d.ci.ip_address || d.ci.ci_type}</div>
+                  <div key={d.ci.id}
+                    className="p-2.5 rounded-lg bg-slate-800/40 border border-slate-700/40 hover:border-slate-600/60 cursor-pointer transition-all"
+                    onClick={() => navigate(`/inventory/${d.ci.id}`)}>
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-slate-200 font-medium">{d.ci.name}</div>
+                      <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">{d.relationship_type.replace(/_/g,' ')}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">{d.ci.ip_address || d.ci.ci_type}</div>
                   </div>
                 )) : (
-                  <p className="text-slate-500 text-sm">None</p>
+                  <p className="text-slate-600 text-sm py-2">None</p>
                 )}
               </div>
             </div>
