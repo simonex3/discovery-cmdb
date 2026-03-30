@@ -487,16 +487,40 @@ class FritzBoxService:
                     logger.warning(f"Mesh fallback failed: {e}")
 
             for host in hosts:
-                # Normalize field names from different sources
-                norm = {
-                    "ip": host.get("ip") or host.get("IP") or host.get("ipaddress") or host.get("NewIPAddress", ""),
-                    "mac": host.get("mac") or host.get("MAC") or host.get("macaddress") or host.get("NewMACAddress", ""),
-                    "name": host.get("name") or host.get("hostname") or host.get("HostName") or host.get("NewHostName", ""),
-                }
+                # Normalize field names from TR-064 and other sources
+                ip = host.get("ip") or host.get("IP") or host.get("ipaddress") or host.get("NewIPAddress") or ""
+                mac = host.get("mac") or host.get("MAC") or host.get("macaddress") or host.get("NewMACAddress") or ""
+                fritz_name = host.get("name") or host.get("hostname") or host.get("HostName") or host.get("NewHostName") or ""
+                is_active = str(host.get("active", "1")) == "1"
+
+                norm = {"ip": ip.strip(), "mac": mac.strip(), "name": fritz_name.strip()}
                 device_ci = self._find_ci(db, norm)
                 if not device_ci:
                     continue
                 matched += 1
+
+                # Enrich CI: store MAC if missing
+                if mac and not device_ci.mac_address:
+                    device_ci.mac_address = mac.upper()
+
+                # Fix bad CI names: IP-as-name, UUID-as-name, raw fritz.box FQDN
+                import re
+                current_name = device_ci.name or ""
+                name_is_ip = bool(re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", current_name))
+                name_is_fqdn = current_name.endswith(".fritz.box")
+                name_is_mac = bool(re.fullmatch(r"[0-9a-fA-F]{12}", current_name))
+                if (name_is_ip or name_is_fqdn or name_is_mac) and fritz_name and not fritz_name.endswith(".fritz.box"):
+                    device_ci.name = fritz_name
+
+                # Fix wrong ci_type=router for non-router devices
+                if device_ci.ci_type == "router" and ip and not (ip.endswith(".1") or ip.endswith(".254")):
+                    iface_type = str(host.get("interface_type") or "")
+                    if iface_type == "802.11":
+                        # WiFi device → likely mobile or iot, don't blindly set to other
+                        pass  # leave for user to correct
+                    # If it looks like a server/NAS by ports keep it, otherwise fix to other
+                    device_ci.ci_type = "other"
+
                 if router_ci and device_ci.id != router_ci.id:
                     if self._create_relationship(db, device_ci, router_ci, "FRITZ!Box host", actor):
                         created += 1

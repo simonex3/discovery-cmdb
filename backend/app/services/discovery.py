@@ -42,31 +42,118 @@ def _get_vendor(mac: Optional[str]) -> Optional[str]:
     return MAC_VENDOR_PREFIXES.get(prefix)
 
 
+def _clean_name(hostname: str, ip: str) -> str:
+    """Return a clean display name: strip .fritz.box suffix, fall back to IP."""
+    if not hostname:
+        return ip
+    # Strip Fritz!Box FQDN suffix
+    name = hostname.replace(".fritz.box", "").replace(".local", "").strip()
+    # If the result is just a MAC address pattern or UUID, use IP
+    import re
+    if re.fullmatch(r"[0-9a-fA-F]{12}", name):
+        return ip
+    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", name):
+        return ip
+    # IP-formatted hostname (e.g. 192-168-178-201) → use IP instead
+    if re.fullmatch(r"\d{1,3}[-\.]\d{1,3}[-\.]\d{1,3}[-\.]\d{1,3}", name):
+        return ip
+    return name
+
+
 def _infer_ci_type(host_info: dict) -> str:
-    """Infer CI type from nmap host data."""
+    """Infer CI type from nmap host data using OS, hostname, vendor and open ports."""
     osmatch = host_info.get("osmatch", [{}])
     os_name = osmatch[0].get("name", "").lower() if osmatch else ""
-    hostname = host_info.get("hostname", "").lower()
+    hostname = (host_info.get("hostname") or "").lower()
+    ip = host_info.get("ip", "")
+    vendor = (host_info.get("vendor") or "").lower()
     ports = [str(p.get("portid", "")) for p in host_info.get("ports", [])]
+    mac = (host_info.get("mac") or "").lower()
 
-    if any(kw in os_name for kw in ["router", "fritzbox", "openwrt", "dd-wrt", "cisco ios"]):
+    # --- Routers / Firewalls: only actual network infrastructure ---
+    # Fritz!Box itself is .1 or explicitly matched by OS/vendor
+    if any(kw in os_name for kw in ["router", "fritzbox", "openwrt", "dd-wrt", "cisco ios", "mikrotik"]):
         return "router"
-    if any(kw in hostname for kw in ["fritz", "router", "gateway"]):
+    if any(kw in vendor for kw in ["avm", "fritzbox", "ubiquiti", "cisco", "mikrotik", "netgear", "asus rt"]):
         return "router"
-    if any(kw in os_name for kw in ["switch", "cisco catalyst"]):
+    if ip.endswith(".1") or ip.endswith(".254"):
+        return "router"
+
+    # --- Switches ---
+    if any(kw in os_name for kw in ["switch", "cisco catalyst", "hp procurve"]):
         return "switch"
-    if "linux" in os_name and any(p in ports for p in ["22", "80", "443", "8080", "8443"]):
-        return "server"
+
+    # --- Access Points ---
+    if any(kw in hostname for kw in ["repeater", "ap-", "-ap", "wlan", "wifi", "access_point"]):
+        return "access_point"
+    if any(kw in vendor for kw in ["tp-link", "unifi", "eap-"]):
+        return "access_point"
+
+    # --- NAS ---
+    if any(kw in hostname for kw in ["nas", "synology", "qnap", "diskstation", "ds2", "ds4"]):
+        return "nas"
+    if any(kw in vendor for kw in ["synology", "qnap", "western digital", "wd my"]):
+        return "nas"
+
+    # --- Servers (Linux with SSH/web, Windows Server) ---
     if any(kw in os_name for kw in ["windows server"]):
         return "server"
-    if any(kw in os_name for kw in ["windows 10", "windows 11", "macos", "mac os"]):
+    if "linux" in os_name and any(p in ports for p in ["22", "8006", "8080", "8443"]):
+        return "server"
+    if "22" in ports and not any(kw in os_name for kw in ["android", "ios", "windows 10", "windows 11", "macos"]):
+        return "server"
+    if any(kw in hostname for kw in ["server", "srv", "tower", "unraid", "proxmox", "esxi", "nas"]):
+        return "server"
+
+    # --- Desktops / Laptops ---
+    if any(kw in os_name for kw in ["windows 10", "windows 11"]):
+        if any(kw in hostname for kw in ["laptop", "thinkpad", "ideapad", "macbook", "notebook", "book"]):
+            return "laptop"
         return "desktop"
+    if any(kw in os_name for kw in ["macos", "mac os"]):
+        if any(kw in hostname for kw in ["macbook", "book"]):
+            return "laptop"
+        return "desktop"
+    if any(kw in hostname for kw in ["macbook", "thinkpad", "ideapad", "laptop", "notebook"]):
+        return "laptop"
+    if any(kw in hostname for kw in ["imac", "mac-mini", "desktop", "pc-", "-pc"]):
+        return "desktop"
+    if any(kw in vendor for kw in ["apple", "lenovo", "dell", "hp", "asus"]):
+        if any(kw in hostname for kw in ["book", "pad"]):
+            return "laptop"
+        if "80" in ports or "443" in ports:
+            return "desktop"
+
+    # --- Mobile ---
     if any(kw in os_name for kw in ["android", "ios"]):
         return "mobile"
-    if "22" in ports:
-        return "server"
+    if any(kw in hostname for kw in ["iphone", "ipad", "android", "galaxy", "pixel", "s24", "s23", "s22"]):
+        return "mobile"
+
+    # --- IoT (smart home, sensors, small embedded) ---
+    if any(kw in hostname for kw in [
+        "esp", "esp8266", "esp32", "arduino", "tasmota", "shelly",
+        "sonos", "amazon", "echo", "alexa", "ring", "nest", "hue",
+        "tplink", "kasa", "homekit", "hass", "zigbee", "zwave",
+        "philips", "denon", "yamaha", "kenwood", "loewe", "avr",
+        "thingsturn", "smart", "plug", "bulb", "cam", "doorbell",
+        "xiaomi", "mi-", "tuya", "govee",
+    ]):
+        return "iot"
+    if any(kw in vendor for kw in [
+        "espressif", "amazon", "sonos", "philips", "xiaomi", "denon",
+        "ring", "nest", "belkin", "wemo", "tp-link", "shelly",
+    ]):
+        return "iot"
+
+    # --- Services / Containers ---
+    if any(kw in hostname for kw in ["docker", "container", "service", "app-"]):
+        return "container"
+
+    # --- Catch-all: open web port with no other classification → other ---
     if "80" in ports or "443" in ports:
-        return "server"
+        return "other"
+
     return "other"
 
 
@@ -273,7 +360,7 @@ class DiscoveryService:
                         updated += 1
                     else:
                         ci_type = _infer_ci_type(host)
-                        name = hostname or ip
+                        name = _clean_name(hostname, ip) if hostname else ip
                         ci = ConfigurationItem(
                             name=name,
                             ci_type=ci_type,
