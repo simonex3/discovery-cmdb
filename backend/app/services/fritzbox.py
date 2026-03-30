@@ -434,12 +434,30 @@ class FritzBoxService:
         method_used = "none"
 
         try:
-            # Find the Fritz!Box router CI in the CMDB
+            # Find or create the Fritz!Box router CI in the CMDB
             router_ci = (
                 db.query(ConfigurationItem).filter(ConfigurationItem.ip_address == self.host).first()
                 or db.query(ConfigurationItem).filter(ConfigurationItem.hostname.ilike("%fritz%")).first()
                 or db.query(ConfigurationItem).filter(ConfigurationItem.name.ilike("%fritz%")).first()
             )
+            if not router_ci:
+                router_ci = ConfigurationItem(
+                    name="FRITZ!Box",
+                    ci_type="router",
+                    status="active",
+                    ip_address=self.host,
+                    hostname="fritz.box",
+                    description="Auto-created by FRITZ!Box host sync",
+                )
+                db.add(router_ci)
+                db.flush()
+                db.add(AuditLog(
+                    ci_id=router_ci.id,
+                    action="created",
+                    actor=actor,
+                    description="FRITZ!Box CI auto-created during host sync",
+                ))
+                logger.info(f"Auto-created Fritz!Box CI for {self.host}")
 
             # 1. TR-064 host iteration (works without mesh, no SID needed)
             tr064_hosts = self._get_all_hosts_tr064()
