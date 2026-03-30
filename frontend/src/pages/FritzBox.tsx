@@ -194,44 +194,68 @@ export default function FritzBox() {
       </div>
 
       {diagnoseResult && (
-        <div className="card space-y-2">
+        <div className="card space-y-3">
           <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
             <Stethoscope className="w-4 h-4" /> Diagnose Result
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
             <div className="bg-slate-800/50 rounded p-2">
               <div className="text-slate-500">SID Login</div>
-              <div className={diagnoseResult.sid_ok ? 'text-green-400' : 'text-red-400'}>
+              <div className={diagnoseResult.sid_ok ? 'text-green-400 font-medium' : 'text-red-400'}>
                 {diagnoseResult.sid_ok ? 'OK' : `Failed: ${diagnoseResult.sid_error || 'unknown'}`}
               </div>
             </div>
             <div className="bg-slate-800/50 rounded p-2">
-              <div className="text-slate-500">Mesh Path</div>
-              <div className="text-slate-300 font-mono truncate">{diagnoseResult.mesh_path || '—'}</div>
+              <div className="text-slate-500">TR-064 Hosts</div>
+              <div className={diagnoseResult.tr064_host_count > 0 ? 'text-green-400 font-medium' : 'text-amber-400'}>
+                {diagnoseResult.tr064_error
+                  ? `Error: ${diagnoseResult.tr064_error}`
+                  : `${diagnoseResult.tr064_host_count ?? '—'} devices`}
+              </div>
             </div>
             <div className="bg-slate-800/50 rounded p-2">
-              <div className="text-slate-500">Nodes found</div>
-              <div className="text-slate-300">{diagnoseResult.nodes ?? '—'}</div>
+              <div className="text-slate-500">Host List Path</div>
+              <div className="text-slate-300 font-mono text-[10px] truncate">{diagnoseResult.host_list_path || '—'}</div>
+              {diagnoseResult.host_list_count != null && (
+                <div className="text-slate-400">{diagnoseResult.host_list_count} hosts</div>
+              )}
+            </div>
+            <div className="bg-slate-800/50 rounded p-2">
+              <div className="text-slate-500">Mesh Path</div>
+              <div className="text-slate-300 font-mono text-[10px] truncate">{diagnoseResult.mesh_path || 'not supported'}</div>
+              {diagnoseResult.nodes != null && (
+                <div className="text-slate-400">{diagnoseResult.nodes} nodes</div>
+              )}
             </div>
           </div>
-          {diagnoseResult.mesh_keys && (
-            <div className="text-xs text-slate-500">
-              Mesh JSON keys: <span className="font-mono text-slate-400">{diagnoseResult.mesh_keys.join(', ')}</span>
+
+          {diagnoseResult.tr064_host_preview?.length > 0 && (
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Host preview (first 3 via TR-064):</div>
+              <div className="space-y-1">
+                {diagnoseResult.tr064_host_preview.map((h: any, i: number) => (
+                  <div key={i} className="text-xs font-mono flex gap-3 bg-slate-800/30 rounded px-2 py-1">
+                    <span className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${h.active === '1' ? 'bg-green-400' : 'bg-slate-600'}`} />
+                    <span className="text-slate-300 w-28 truncate">{h.ip || '—'}</span>
+                    <span className="text-slate-500 w-36 truncate">{h.mac || '—'}</span>
+                    <span className="text-slate-400 truncate">{h.name || '—'}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
+
           {diagnoseResult.meshlist_status && (
-            <div className="space-y-1">
-              <div className="text-xs text-slate-500">Endpoint status:</div>
-              {Object.entries(diagnoseResult.meshlist_status).map(([url, status]) => (
-                <div key={url} className="text-xs font-mono flex justify-between gap-4 bg-slate-800/30 rounded px-2 py-1">
-                  <span className="text-slate-400 truncate">{url}</span>
-                  <span className={status === 200 ? 'text-green-400' : 'text-red-400'}>{String(status)}</span>
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Mesh endpoints:</div>
+              {Object.entries(diagnoseResult.meshlist_status).map(([url, s]) => (
+                <div key={url} className="text-xs font-mono flex justify-between gap-4 bg-slate-800/30 rounded px-2 py-1 mb-0.5">
+                  <span className="text-slate-500 truncate">{url}</span>
+                  <span className={s === 200 ? 'text-green-400' : 'text-slate-600'}>{String(s)}</span>
                 </div>
               ))}
             </div>
-          )}
-          {diagnoseResult.mesh_error && (
-            <div className="text-xs text-red-400 font-mono">{diagnoseResult.mesh_error}</div>
           )}
         </div>
       )}

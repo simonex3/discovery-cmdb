@@ -58,16 +58,20 @@ class FritzBoxService:
             raise RuntimeError("FRITZ!Box login failed (SID is 0)")
         return sid2
 
-    def _soap_call(self, action: str) -> Optional[str]:
+    def _soap_call(self, action: str, params: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """Call TR-064 Hosts:1 action and return response XML as text."""
         if not self.username or not self.password:
             return None
+        inner = ""
+        if params:
+            for k, v in params.items():
+                inner += f"<{k}>{v}</{k}>"
         body = (
             '<?xml version="1.0" encoding="utf-8"?>'
             '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
             's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
             '<s:Body>'
-            f'<u:{action} xmlns:u="urn:dslforum-org:service:Hosts:1"></u:{action}>'
+            f'<u:{action} xmlns:u="urn:dslforum-org:service:Hosts:1">{inner}</u:{action}>'
             '</s:Body>'
             '</s:Envelope>'
         )
@@ -95,6 +99,89 @@ class FritzBoxService:
                 logger.warning(f"TR-064 call {action} failed at {url}: {e}")
                 continue
         return None
+
+    def _get_host_count(self) -> int:
+        """TR-064: GetHostNumberOfEntries → int."""
+        xml_text = self._soap_call("GetHostNumberOfEntries")
+        if not xml_text:
+            return 0
+        try:
+            root = ElementTree.fromstring(xml_text)
+            val = root.findtext(".//NewHostNumberOfEntries")
+            return int(val) if val else 0
+        except Exception:
+            return 0
+
+    def _get_host_by_index(self, index: int) -> Optional[Dict[str, Any]]:
+        """TR-064: GetGenericHostEntry by index → dict with IP, MAC, hostname."""
+        xml_text = self._soap_call("GetGenericHostEntry", {"NewIndex": str(index)})
+        if not xml_text:
+            return None
+        try:
+            root = ElementTree.fromstring(xml_text)
+            host: Dict[str, Any] = {}
+            for tag, key in [
+                ("NewIPAddress", "ip"),
+                ("NewMACAddress", "mac"),
+                ("NewHostName", "name"),
+                ("NewInterfaceType", "interface_type"),
+                ("NewActive", "active"),
+                ("NewAddressSource", "address_source"),
+            ]:
+                val = root.findtext(f".//{tag}")
+                if val is not None:
+                    host[key] = val.strip()
+            return host if host.get("ip") or host.get("mac") else None
+        except Exception as e:
+            logger.warning(f"GetGenericHostEntry({index}) parse error: {e}")
+            return None
+
+    def _get_all_hosts_tr064(self) -> List[Dict[str, Any]]:
+        """Iterate TR-064 GetGenericHostEntry to get all connected hosts."""
+        count = self._get_host_count()
+        if count == 0:
+            return []
+        hosts = []
+        for i in range(count):
+            h = self._get_host_by_index(i)
+            if h:
+                hosts.append(h)
+        return hosts
+
+    def _get_host_list_via_path(self, sid: str) -> List[Dict[str, Any]]:
+        """Try X_AVM-DE_GetHostListPath → fetch JSON host list."""
+        path = self._soap_get_path("X_AVM-DE_GetHostListPath", "NewX_AVM-DE_HostListPath")
+        if not path:
+            return []
+        try:
+            url = urljoin(f"http://{self.host}/", path)
+            r = httpx.get(url, params={"sid": sid}, timeout=10)
+            if r.status_code != 200:
+                return []
+            text = r.text.strip()
+            if text.startswith("{"):
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    return data.get("items") or data.get("hosts") or []
+                if isinstance(data, list):
+                    return data
+            # XML fallback
+            if text.startswith("<"):
+                root = ElementTree.fromstring(text)
+                hosts = []
+                for item in root.iter():
+                    if item.tag.lower() in ("item", "host", "device"):
+                        h: Dict[str, Any] = {}
+                        for child in item:
+                            if child.text:
+                                h[child.tag.lower().replace("new", "")] = child.text.strip()
+                        h.update({k.lower(): v for k, v in item.attrib.items()})
+                        if h:
+                            hosts.append(h)
+                return hosts
+        except Exception as e:
+            logger.warning(f"Host list path fetch failed: {e}")
+        return []
 
     def _soap_get_path(self, action: str, tag: str) -> Optional[str]:
         xml_text = self._soap_call(action)
@@ -332,74 +419,86 @@ class FritzBoxService:
     def sync_hosts(self, db: Session, actor: str = "system") -> Dict[str, Any]:
         """Sync all hosts visible to the Fritz!Box as connects_to relationships.
 
-        Uses TR-064 X_AVM-DE_GetHostListPath to get all connected devices,
-        then links each device that matches a CI to the Fritz!Box router CI.
+        Priority:
+        1. TR-064 GetGenericHostEntry iteration (works on every Fritz!Box)
+        2. X_AVM-DE_GetHostListPath JSON endpoint
+        3. Mesh list fallback
+        Each matching CI gets a 'connects_to' relationship to the Fritz!Box CI.
         """
         if not self.enabled or not self.host:
             return {"message": "FRITZ!Box sync disabled or not configured", "created": 0}
 
         created = 0
-        host_count = 0
-        try:
-            # Find the Fritz!Box itself in our CMDB (by IP)
-            router_ci = db.query(ConfigurationItem).filter(
-                ConfigurationItem.ip_address == self.host
-            ).first()
-            if not router_ci:
-                # Try hostname fritz.box
-                router_ci = db.query(ConfigurationItem).filter(
-                    ConfigurationItem.hostname.ilike("%fritz%")
-                ).first()
+        matched = 0
+        hosts: List[Dict[str, Any]] = []
+        method_used = "none"
 
-            # Fetch host list path via TR-064
-            host_list_path = self._soap_get_path("X_AVM-DE_GetHostListPath", "NewX_AVM-DE_HostListPath")
-            hosts_data = None
-            if host_list_path:
+        try:
+            # Find the Fritz!Box router CI in the CMDB
+            router_ci = (
+                db.query(ConfigurationItem).filter(ConfigurationItem.ip_address == self.host).first()
+                or db.query(ConfigurationItem).filter(ConfigurationItem.hostname.ilike("%fritz%")).first()
+                or db.query(ConfigurationItem).filter(ConfigurationItem.name.ilike("%fritz%")).first()
+            )
+
+            # 1. TR-064 host iteration (works without mesh, no SID needed)
+            tr064_hosts = self._get_all_hosts_tr064()
+            if tr064_hosts:
+                hosts = tr064_hosts
+                method_used = "tr064_hosts"
+
+            # 2. Host list path via SID
+            if not hosts:
                 try:
                     sid = self._get_sid()
-                    url = urljoin(f"http://{self.host}/", host_list_path)
-                    r = httpx.get(url, params={"sid": sid}, timeout=10)
-                    if r.status_code == 200 and r.text.strip().startswith("{"):
-                        hosts_data = json.loads(r.text)
+                    hosts = self._get_host_list_via_path(sid)
+                    if hosts:
+                        method_used = "host_list_path"
                 except Exception as e:
-                    logger.warning(f"Failed to fetch host list: {e}")
+                    logger.warning(f"Host list path failed: {e}")
 
-            hosts: List[Dict[str, Any]] = []
-            if isinstance(hosts_data, dict):
-                hosts = hosts_data.get("items") or hosts_data.get("hosts") or []
-            elif isinstance(hosts_data, list):
-                hosts = hosts_data
-
-            # Fallback: use mesh nodes list to extract host info
+            # 3. Mesh list fallback
             if not hosts:
                 try:
                     sid = self._get_sid()
                     mesh = self._fetch_meshlist(sid)
                     hosts = self._extract_nodes(mesh)
+                    if hosts:
+                        method_used = "meshlist"
                 except Exception as e:
-                    logger.warning(f"Host list fallback via mesh failed: {e}")
-
-            host_count = len(hosts)
+                    logger.warning(f"Mesh fallback failed: {e}")
 
             for host in hosts:
-                device_ci = self._find_ci(db, host)
+                # Normalize field names from different sources
+                norm = {
+                    "ip": host.get("ip") or host.get("IP") or host.get("ipaddress") or host.get("NewIPAddress", ""),
+                    "mac": host.get("mac") or host.get("MAC") or host.get("macaddress") or host.get("NewMACAddress", ""),
+                    "name": host.get("name") or host.get("hostname") or host.get("HostName") or host.get("NewHostName", ""),
+                }
+                device_ci = self._find_ci(db, norm)
                 if not device_ci:
                     continue
+                matched += 1
                 if router_ci and device_ci.id != router_ci.id:
                     if self._create_relationship(db, device_ci, router_ci, "FRITZ!Box host", actor):
                         created += 1
 
             db.commit()
             result = {
-                "message": "FRITZ!Box host sync completed",
+                "message": f"Host sync completed (method: {method_used})",
                 "created": created,
-                "hosts_found": host_count,
-                "router_ci": router_ci.name if router_ci else None,
+                "hosts_found": len(hosts),
+                "matched_cis": matched,
+                "router_ci": router_ci.name if router_ci else "not found in CMDB",
             }
         except Exception as e:
             logger.warning(f"FRITZ!Box host sync failed: {e}")
             db.rollback()
-            result = {"message": f"FRITZ!Box host sync failed: {e}", "created": created, "hosts_found": host_count}
+            result = {
+                "message": f"FRITZ!Box host sync failed: {e}",
+                "created": created,
+                "hosts_found": len(hosts),
+            }
 
         now = datetime.now(timezone.utc).isoformat()
         for key, val in {
@@ -421,14 +520,42 @@ class FritzBoxService:
             "has_user": bool(self.username),
             "has_password": bool(self.password),
         }
+
+        # SID login
         try:
             sid = self._get_sid()
-            result["sid_ok"] = sid != "0000000000000000"
+            result["sid_ok"] = True
         except Exception as e:
             result["sid_ok"] = False
             result["sid_error"] = str(e)
             return result
 
+        # TR-064 host count (works on every Fritz!Box, no mesh needed)
+        try:
+            host_count = self._get_host_count()
+            result["tr064_host_count"] = host_count
+            if host_count > 0:
+                # Fetch first 3 as preview
+                preview = []
+                for i in range(min(3, host_count)):
+                    h = self._get_host_by_index(i)
+                    if h:
+                        preview.append({k: v for k, v in h.items() if k in ("ip", "mac", "name", "active", "interface_type")})
+                result["tr064_host_preview"] = preview
+        except Exception as e:
+            result["tr064_error"] = str(e)
+
+        # Host list path
+        host_list_path = self._soap_get_path("X_AVM-DE_GetHostListPath", "NewX_AVM-DE_HostListPath")
+        result["host_list_path"] = host_list_path
+        if host_list_path:
+            try:
+                hosts = self._get_host_list_via_path(sid)
+                result["host_list_count"] = len(hosts)
+            except Exception as e:
+                result["host_list_error"] = str(e)
+
+        # Mesh path (optional — not available on all models)
         mesh_path = self._soap_get_path("X_AVM-DE_GetMeshListPath", "NewX_AVM-DE_MeshListPath")
         result["mesh_path"] = mesh_path
 
@@ -439,19 +566,22 @@ class FritzBoxService:
             f"http://{self.host}/meshlist.xml",
         ]:
             try:
-                r = httpx.get(url, params={"sid": sid}, timeout=10)
+                r = httpx.get(url, params={"sid": sid}, timeout=5)
                 status_checks[url] = r.status_code
             except Exception as e:
                 status_checks[url] = f"error: {e}"
         result["meshlist_status"] = status_checks
 
-        try:
-            mesh = self._fetch_meshlist(sid)
-            nodes = self._extract_nodes(mesh)
-            result["nodes"] = len(nodes)
-            if isinstance(mesh, dict):
-                result["mesh_keys"] = list(mesh.keys())[:10]
-        except Exception as e:
-            result["mesh_error"] = str(e)
+        if mesh_path:
+            try:
+                mesh = self._fetch_meshlist(sid)
+                nodes = self._extract_nodes(mesh)
+                result["nodes"] = len(nodes)
+                if isinstance(mesh, dict):
+                    result["mesh_keys"] = list(mesh.keys())[:10]
+            except Exception as e:
+                result["mesh_error"] = str(e)
+        else:
+            result["nodes"] = 0
 
         return result
