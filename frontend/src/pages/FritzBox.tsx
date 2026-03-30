@@ -26,6 +26,7 @@ export default function FritzBox() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncingNetdev, setSyncingNetdev] = useState(false);
   const [syncingHosts, setSyncingHosts] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnoseResult, setDiagnoseResult] = useState<any>(null);
@@ -81,6 +82,25 @@ export default function FritzBox() {
       setError(err.response?.data?.detail || 'Sync failed');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleSyncNetdev = async () => {
+    setSyncingNetdev(true);
+    setError(null);
+    setStatusMsg(null);
+    try {
+      const res = await client.post('/fritz/sync/netdev');
+      const r = res.data;
+      setStatusMsg(
+        `${r.message} — ${r.created_relationships} relationships, ${r.devices_processed} devices, ` +
+        `${r.health_updated} health updates, ${r.names_updated} names improved`
+      );
+      await refetchStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Mesh sync failed');
+    } finally {
+      setSyncingNetdev(false);
     }
   };
 
@@ -180,11 +200,16 @@ export default function FritzBox() {
             </div>
           )}
           <div className="space-y-2">
-            <button onClick={handleSync} disabled={syncing} className="btn-primary text-sm flex items-center gap-2 w-full">
-              <PlayCircle className="w-4 h-4" /> {syncing ? 'Syncing...' : 'Mesh Sync (Repeater Topology)'}
+            <button onClick={handleSyncNetdev} disabled={syncingNetdev} className="btn-primary text-sm flex items-center gap-2 w-full">
+              <Network className="w-4 h-4" />
+              {syncingNetdev ? 'Syncing...' : 'Mesh Sync via netDev (empfohlen)'}
             </button>
+            <p className="text-[10px] text-slate-500 -mt-1 ml-1">Gerät → Repeater → Fritz!Box Topologie</p>
             <button onClick={handleSyncHosts} disabled={syncingHosts} className="btn-secondary text-sm flex items-center gap-2 w-full">
-              <Network className="w-4 h-4" /> {syncingHosts ? 'Syncing...' : 'Host Sync (All Devices → Router)'}
+              <PlayCircle className="w-4 h-4" /> {syncingHosts ? 'Syncing...' : 'Host Sync (alle Geräte → Router)'}
+            </button>
+            <button onClick={handleSync} disabled={syncing} className="btn-secondary text-sm flex items-center gap-2 w-full text-slate-500">
+              <PlayCircle className="w-3.5 h-3.5" /> {syncing ? 'Syncing...' : 'Legacy Mesh Sync (meshlist)'}
             </button>
             <button onClick={handleDiagnose} disabled={diagnosing} className="btn-secondary text-sm flex items-center gap-2 w-full">
               <Stethoscope className="w-4 h-4" /> {diagnosing ? 'Diagnosing...' : 'Run Diagnose'}

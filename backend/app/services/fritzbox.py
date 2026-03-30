@@ -555,6 +555,167 @@ class FritzBoxService:
         db.commit()
         return result
 
+    def sync_netdev(self, db: Session, actor: str = "system") -> Dict[str, Any]:
+        """Sync full mesh topology via Fritz!Box data.lua netDev page.
+
+        Each active/passive device reports which Fritz!Box node (router or
+        repeater) it connects through via parent.url. This builds the full
+        star-topology: device → repeater → Fritz!Box router.
+        """
+        if not self.enabled or not self.host:
+            return {"message": "Fritz!Box sync disabled or not configured", "created": 0}
+
+        created = 0
+        updated_health = 0
+        updated_names = 0
+        devices_processed = 0
+
+        try:
+            sid = self._get_sid()
+
+            r = httpx.post(
+                f"http://{self.host}/data.lua",
+                data={"sid": sid, "page": "netDev", "xhrId": "all"},
+                timeout=15,
+            )
+            r.raise_for_status()
+            payload = r.json()
+            data = payload.get("data", {})
+
+            active_devs: List[Dict[str, Any]] = data.get("active", [])
+            passive_devs: List[Dict[str, Any]] = data.get("passive", [])
+
+            # Find or create the Fritz!Box router CI
+            router_ci = (
+                db.query(ConfigurationItem).filter(ConfigurationItem.ip_address == self.host).first()
+                or db.query(ConfigurationItem).filter(ConfigurationItem.name.ilike("%fritz%box%")).first()
+            )
+            if not router_ci:
+                router_ci = ConfigurationItem(
+                    name="FRITZ!Box",
+                    ci_type="router",
+                    status="active",
+                    ip_address=self.host,
+                    hostname="fritz.box",
+                    description="Auto-created by Fritz!Box netDev sync",
+                )
+                db.add(router_ci)
+                db.flush()
+                db.add(AuditLog(ci_id=router_ci.id, action="created", actor=actor,
+                                description="FRITZ!Box CI auto-created during netDev sync"))
+
+            import re
+
+            def normalize_dev(dev: Dict[str, Any]) -> Dict[str, Any]:
+                """Extract unified fields from a netDev device entry."""
+                ip_raw = dev.get("ipv4") or dev.get("ip") or {}
+                ip = ip_raw.get("ip") if isinstance(ip_raw, dict) else str(ip_raw or "")
+                mac = (dev.get("mac") or "").upper()
+                name = dev.get("name") or ""
+                parent_url = (dev.get("parent") or {}).get("url") or ""
+                parent_ip = parent_url.replace("http://", "").replace("https://", "").split("/")[0].strip()
+                return {"ip": ip, "mac": mac, "name": name, "parent_ip": parent_ip}
+
+            def find_or_skip(norm: Dict[str, Any]) -> Optional[ConfigurationItem]:
+                if norm["ip"]:
+                    ci = db.query(ConfigurationItem).filter(ConfigurationItem.ip_address == norm["ip"]).first()
+                    if ci:
+                        return ci
+                if norm["mac"]:
+                    ci = db.query(ConfigurationItem).filter(ConfigurationItem.mac_address == norm["mac"]).first()
+                    if ci:
+                        return ci
+                return None
+
+            def is_bad_name(name: str) -> bool:
+                if not name:
+                    return True
+                if re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", name):
+                    return True
+                if re.fullmatch(r"\d{1,3}[-]\d{1,3}[-]\d{1,3}[-]\d{1,3}", name):
+                    return True
+                if re.fullmatch(r"[0-9a-fA-F]{12}", name):
+                    return True
+                return False
+
+            for dev, is_active in [(d, True) for d in active_devs] + [(d, False) for d in passive_devs]:
+                norm = normalize_dev(dev)
+                if not norm["ip"] and not norm["mac"]:
+                    continue
+
+                ci = find_or_skip(norm)
+                if not ci:
+                    continue
+
+                devices_processed += 1
+
+                # Store MAC if missing
+                if norm["mac"] and not ci.mac_address:
+                    ci.mac_address = norm["mac"]
+
+                # Update health based on active/passive status
+                new_health = "healthy" if is_active else "down"
+                if ci.health_status != new_health:
+                    ci.health_status = new_health
+                    updated_health += 1
+
+                # Improve CI name from Fritz!Box friendly name
+                fritz_name = norm["name"].strip()
+                if fritz_name and is_bad_name(ci.name) and not is_bad_name(fritz_name):
+                    ci.name = fritz_name
+                    updated_names += 1
+
+                # Build relationship: device → parent (repeater or router)
+                parent_ci = None
+                if norm["parent_ip"]:
+                    parent_ci = db.query(ConfigurationItem).filter(
+                        ConfigurationItem.ip_address == norm["parent_ip"]
+                    ).first()
+                if not parent_ci:
+                    # LAN devices connect directly to the router
+                    parent_ci = router_ci
+
+                if parent_ci and ci.id != parent_ci.id:
+                    if self._create_relationship(db, ci, parent_ci, "FRITZ!Box mesh", actor):
+                        created += 1
+
+            # Ensure each repeater also connects to the router
+            repeater_ips = {normalize_dev(d)["parent_ip"] for d in active_devs + passive_devs
+                            if normalize_dev(d)["parent_ip"]}
+            for rip in repeater_ips:
+                repeater_ci = db.query(ConfigurationItem).filter(
+                    ConfigurationItem.ip_address == rip
+                ).first()
+                if repeater_ci and repeater_ci.id != router_ci.id:
+                    if self._create_relationship(db, repeater_ci, router_ci, "FRITZ!Box mesh", actor):
+                        created += 1
+
+            db.commit()
+            result = {
+                "message": "FRITZ!Box netDev mesh sync completed",
+                "created_relationships": created,
+                "devices_processed": devices_processed,
+                "health_updated": updated_health,
+                "names_updated": updated_names,
+                "active": len(active_devs),
+                "passive": len(passive_devs),
+            }
+
+        except Exception as e:
+            logger.warning(f"Fritz!Box netDev sync failed: {e}")
+            db.rollback()
+            result = {"message": f"Fritz!Box netDev sync failed: {e}", "created_relationships": 0}
+
+        now = datetime.now(timezone.utc).isoformat()
+        for key, val in {"fritz_last_sync": now, "fritz_last_sync_result": json.dumps(result)}.items():
+            s = db.query(AppSettings).filter(AppSettings.key == key).first()
+            if s:
+                s.value = str(val)
+            else:
+                db.add(AppSettings(key=key, value=str(val)))
+        db.commit()
+        return result
+
     def diagnose(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "host": self.host,

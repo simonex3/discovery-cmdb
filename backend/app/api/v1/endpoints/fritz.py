@@ -55,6 +55,12 @@ def get_sync_status(db: Session = Depends(get_db), _: User = Depends(require_use
     }
 
 
+@router.post("/sync/netdev", summary="Sync full mesh topology via data.lua netDev (recommended)")
+def sync_fritz_netdev(db: Session = Depends(get_db), user: User = Depends(require_operator)):
+    svc = FritzBoxService.from_settings(db)
+    return svc.sync_netdev(db, actor=user.username)
+
+
 @router.post("/sync/hosts", summary="Sync all Fritz!Box connected hosts as CI dependencies")
 def sync_fritz_hosts(db: Session = Depends(get_db), user: User = Depends(require_operator)):
     svc = FritzBoxService.from_settings(db)
