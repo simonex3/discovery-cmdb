@@ -194,6 +194,40 @@ class FritzBoxService:
             logger.warning(f"Failed parsing SOAP {action} response: {e}")
             return None
 
+    def reboot_device(self, host: str | None = None) -> dict:
+        """Reboot a FRITZ!Box device (router or repeater) via TR-064 DeviceConfig:1."""
+        target = host or self.host
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+            's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+            '<s:Body>'
+            '<u:Reboot xmlns:u="urn:dslforum-org:service:DeviceConfig:1"></u:Reboot>'
+            '</s:Body>'
+            '</s:Envelope>'
+        )
+        headers = {
+            "Content-Type": 'text/xml; charset="utf-8"',
+            "SOAPAction": '"urn:dslforum-org:service:DeviceConfig:1#Reboot"',
+        }
+        last_err = None
+        for port, scheme in [(49000, "http"), (49443, "https")]:
+            url = f"{scheme}://{target}:{port}/upnp/control/deviceconfig"
+            try:
+                r = httpx.post(
+                    url, headers=headers, content=body,
+                    auth=(self.username, self.password),
+                    timeout=10, verify=False,
+                )
+                if r.status_code in (200, 204):
+                    logger.info(f"Reboot sent to {target} via {url}")
+                    return {"success": True, "host": target, "message": f"Reboot command sent to {target}"}
+                last_err = f"HTTP {r.status_code}"
+            except Exception as e:
+                last_err = str(e)
+                logger.warning(f"Reboot {target}:{port} failed: {e}")
+        raise RuntimeError(f"Could not reboot {target}: {last_err}")
+
     @staticmethod
     def _parse_login_sid(xml_text: str) -> tuple[str, str]:
         root = ElementTree.fromstring(xml_text)
