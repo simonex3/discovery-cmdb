@@ -52,6 +52,20 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
 
+    def run_fritz_netdev_sync():
+        db = SessionLocal()
+        try:
+            from app.services.fritzbox import FritzBoxService
+            fritz = FritzBoxService.from_settings(db)
+            if not fritz.enabled or not fritz.host:
+                return
+            result = fritz.sync_netdev(db)
+            logger.info(f"Scheduled Fritz!Box netdev sync: {result}")
+        except Exception as exc:
+            logger.error(f"Scheduled Fritz!Box netdev sync failed: {exc}")
+        finally:
+            db.close()
+
     scheduler.add_job(
         run_health_checks,
         "interval",
@@ -66,11 +80,19 @@ async def lifespan(app: FastAPI):
         id="auto_discovery",
         replace_existing=True,
     )
+    scheduler.add_job(
+        run_fritz_netdev_sync,
+        "interval",
+        minutes=15,
+        id="fritz_netdev_sync",
+        replace_existing=True,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     logger.info(
         f"Scheduler started: health checks every {settings.HEALTH_CHECK_INTERVAL_MINUTES}m, "
-        f"discovery every {settings.DISCOVERY_INTERVAL_MINUTES}m"
+        f"discovery every {settings.DISCOVERY_INTERVAL_MINUTES}m, "
+        f"fritz netdev sync every 15m"
     )
 
     yield

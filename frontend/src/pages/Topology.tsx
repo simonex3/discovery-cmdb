@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   ReactFlow, Background, BackgroundVariant, Controls, MiniMap,
-  useNodesState, useEdgesState, Panel, MarkerType,
+  useNodesState, useEdgesState, Panel, MarkerType, useReactFlow,
 } from '@xyflow/react';
 import type { Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -13,6 +13,64 @@ import type { TopologyNodeData } from '../types';
 import CINode from '../components/topology/CINode';
 
 const nodeTypes = { ciNode: CINode };
+
+interface TopologySearchPanelProps {
+  nodes: Node<TopologyNodeData>[];
+  setNodes: (value: Node<TopologyNodeData>[] | ((nds: Node<TopologyNodeData>[]) => Node<TopologyNodeData>[])) => void;
+}
+
+function TopologySearchPanel({ nodes, setNodes }: TopologySearchPanelProps) {
+  const { fitView } = useReactFlow();
+  const [nodeSearch, setNodeSearch] = useState('');
+
+  useEffect(() => {
+    const q = nodeSearch.trim().toLowerCase();
+    if (!q) {
+      // Clear highlights
+      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, highlighted: false } })));
+      return;
+    }
+    const matched: Node<TopologyNodeData>[] = [];
+    const updated = nodes.map(n => {
+      const d = n.data as TopologyNodeData;
+      const isMatch =
+        d.label?.toLowerCase().includes(q) ||
+        d.ip_address?.toLowerCase().includes(q);
+      if (isMatch) matched.push(n);
+      return { ...n, data: { ...n.data, highlighted: isMatch } };
+    });
+    setNodes(() => updated);
+    if (matched.length === 1) {
+      setTimeout(() => {
+        fitView({ nodes: [matched[0]], padding: 0.5, duration: 400 });
+      }, 50);
+    }
+  }, [nodeSearch, nodes.length]);
+
+  return (
+    <Panel position="top-right" className="bg-slate-900/95 backdrop-blur border border-slate-700/50 rounded-xl p-3 space-y-2 min-w-[200px]" style={{ top: '0px' }}>
+      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Find Node</p>
+      <div className="relative">
+        <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-500" />
+        <input
+          className="bg-slate-800 border border-slate-700 rounded-lg px-7 py-1.5 text-xs text-slate-200 w-full focus:outline-none focus:border-yellow-500/60"
+          placeholder="Name or IP..."
+          value={nodeSearch}
+          onChange={e => setNodeSearch(e.target.value)}
+        />
+      </div>
+      {nodeSearch.trim() && (
+        <p className="text-[10px] text-slate-500">
+          {nodes.filter(n => {
+            const d = n.data as TopologyNodeData;
+            const q = nodeSearch.trim().toLowerCase();
+            return d.label?.toLowerCase().includes(q) || d.ip_address?.toLowerCase().includes(q);
+          }).length} match(es)
+        </p>
+      )}
+    </Panel>
+  );
+}
 
 const EDGE_COLORS: Record<string, string> = {
   depends_on:    '#f59e0b',
@@ -217,8 +275,11 @@ export default function Topology() {
           </div>
         </Panel>
 
+        {/* Top-right: node search */}
+        <TopologySearchPanel nodes={nodes} setNodes={setNodes} />
+
         {/* Right panel: legend */}
-        <Panel position="top-right" className="bg-slate-900/95 backdrop-blur border border-slate-700/50 rounded-xl p-3 space-y-2 min-w-[160px]">
+        <Panel position="top-right" className="bg-slate-900/95 backdrop-blur border border-slate-700/50 rounded-xl p-3 space-y-2 min-w-[160px]" style={{ top: '120px' }}>
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Health</p>
           {[['healthy','#22c55e'],['degraded','#f59e0b'],['down','#ef4444'],['unknown','#64748b']].map(([l,c]) => (
             <div key={l} className="flex items-center gap-2 text-xs">

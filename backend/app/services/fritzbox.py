@@ -194,10 +194,35 @@ class FritzBoxService:
             logger.warning(f"Failed parsing SOAP {action} response: {e}")
             return None
 
+    def _get_sid_for(self, host: str) -> str:
+        """Get a SID for an arbitrary Fritz!Box device (e.g. repeater) using configured credentials."""
+        url = f"http://{host}/login_sid.lua"
+        r = httpx.get(url, timeout=10)
+        r.raise_for_status()
+        sid, challenge = self._parse_login_sid(r.text)
+        if sid != "0000000000000000":
+            return sid
+        response = self._build_response(challenge, self.password)
+        params = {"response": response}
+        if self.username:
+            params["username"] = self.username
+        r2 = httpx.get(url, params=params, timeout=10)
+        r2.raise_for_status()
+        sid2, _ = self._parse_login_sid(r2.text)
+        if sid2 == "0000000000000000":
+            raise RuntimeError(f"SID login failed for {host}")
+        return sid2
+
     def reboot_device(self, host: str | None = None) -> dict:
-        """Reboot a FRITZ!Box device (router or repeater) via TR-064 DeviceConfig:1."""
+        """Reboot a FRITZ!Box device (router or repeater).
+
+        Strategy:
+        1. TR-064 DeviceConfig:1 with configured credentials (works for main router)
+        2. TR-064 DeviceConfig:1 with empty username (some repeaters)
+        3. SID-based reboot via data.lua (works for repeaters that reject Basic Auth)
+        """
         target = host or self.host
-        body = (
+        soap_body = (
             '<?xml version="1.0" encoding="utf-8"?>'
             '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
             's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
@@ -206,27 +231,53 @@ class FritzBoxService:
             '</s:Body>'
             '</s:Envelope>'
         )
-        headers = {
+        soap_headers = {
             "Content-Type": 'text/xml; charset="utf-8"',
             "SOAPAction": '"urn:dslforum-org:service:DeviceConfig:1#Reboot"',
         }
-        last_err = None
-        for port, scheme in [(49000, "http"), (49443, "https")]:
-            url = f"{scheme}://{target}:{port}/upnp/control/deviceconfig"
-            try:
-                r = httpx.post(
-                    url, headers=headers, content=body,
-                    auth=(self.username, self.password),
-                    timeout=10, verify=False,
-                )
-                if r.status_code in (200, 204):
-                    logger.info(f"Reboot sent to {target} via {url}")
-                    return {"success": True, "host": target, "message": f"Reboot command sent to {target}"}
-                last_err = f"HTTP {r.status_code}"
-            except Exception as e:
-                last_err = str(e)
-                logger.warning(f"Reboot {target}:{port} failed: {e}")
-        raise RuntimeError(f"Could not reboot {target}: {last_err}")
+
+        # Strategy 1 + 2: TR-064 with configured username, then empty username
+        for username in [self.username, ""]:
+            for port, scheme in [(49000, "http"), (49443, "https")]:
+                url = f"{scheme}://{target}:{port}/upnp/control/deviceconfig"
+                try:
+                    r = httpx.post(
+                        url, headers=soap_headers, content=soap_body,
+                        auth=(username, self.password),
+                        timeout=10, verify=False,
+                    )
+                    if r.status_code in (200, 204):
+                        logger.info(f"Reboot sent to {target} via TR-064 (user='{username}')")
+                        return {"success": True, "host": target, "message": f"Reboot command sent to {target}"}
+                except Exception as e:
+                    logger.debug(f"TR-064 reboot {target}:{port} user='{username}': {e}")
+
+        # Strategy 3: SID-based reboot via data.lua (Fritz!Box repeaters)
+        try:
+            sid = self._get_sid_for(target)
+            r = httpx.post(
+                f"http://{target}/data.lua",
+                data={"sid": sid, "reboot": ""},
+                timeout=15,
+            )
+            # Fritz!Box returns redirect or 200 on success
+            if r.status_code in (200, 302, 303):
+                logger.info(f"Reboot sent to {target} via SID/data.lua")
+                return {"success": True, "host": target, "message": f"Reboot command sent to {target} (SID method)"}
+            # Try alternative endpoint used by some firmware versions
+            r2 = httpx.get(
+                f"http://{target}/reboot.lua",
+                params={"sid": sid},
+                timeout=10,
+            )
+            if r2.status_code in (200, 302, 303):
+                logger.info(f"Reboot sent to {target} via reboot.lua")
+                return {"success": True, "host": target, "message": f"Reboot command sent to {target} (SID method)"}
+        except Exception as e:
+            logger.warning(f"SID-based reboot {target} failed: {e}")
+            raise RuntimeError(f"Could not reboot {target}: {e}")
+
+        raise RuntimeError(f"All reboot methods failed for {target}")
 
     @staticmethod
     def _parse_login_sid(xml_text: str) -> tuple[str, str]:

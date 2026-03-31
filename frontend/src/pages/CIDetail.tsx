@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X, History } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 import client from '../api/client';
 import type { CI, Relationship, DependencyTree } from '../types';
 import { healthBadge, statusBadge } from '../components/ui/Badge';
@@ -41,6 +42,15 @@ const EMPTY_FORM: CIFormState = {
   properties: '',
 };
 
+const ACTION_STYLE: Record<string, string> = {
+  discovered:     'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  created:        'bg-green-500/15 text-green-400 border-green-500/30',
+  updated:        'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  deleted:        'bg-red-500/15 text-red-400 border-red-500/30',
+  health_changed: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+  rel_created:    'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
+};
+
 export default function CIDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -75,6 +85,12 @@ export default function CIDetail() {
   const { data: ciOptions } = useQuery({
     queryKey: ['ci-options'],
     queryFn: () => client.get('/cis', { params: { page: 1, page_size: 200 } }).then(r => r.data.items as CI[]),
+  });
+
+  const { data: auditData } = useQuery({
+    queryKey: ['ci-audit', id],
+    queryFn: () => client.get('/audit', { params: { ci_id: id, page_size: 20 } }).then(r => r.data),
+    enabled: !isNew,
   });
 
   useEffect(() => {
@@ -470,6 +486,35 @@ export default function CIDetail() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {!isNew && (
+        <div className="card space-y-3">
+          <h3 className="section-title flex items-center gap-2">
+            <History className="w-3.5 h-3.5" /> History
+          </h3>
+          <div className="max-h-64 overflow-y-auto space-y-1.5">
+            {(auditData?.items ?? []).length === 0 && (
+              <p className="text-slate-500 text-sm py-2">No audit history for this CI.</p>
+            )}
+            {(auditData?.items ?? []).map((log: any) => (
+              <div key={log.id} className="flex items-start gap-2.5 py-1.5 border-b border-slate-800/60 last:border-0">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border flex-shrink-0 mt-0.5 ${ACTION_STYLE[log.action] ?? 'bg-slate-500/15 text-slate-400 border-slate-500/30'}`}>
+                  {log.action}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-slate-300 truncate">{log.description || '—'}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {log.actor && <span className="mr-2">{log.actor}</span>}
+                    {log.timestamp && (
+                      <span>{formatDistanceToNow(new Date(log.timestamp), { addSuffix: true })}</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

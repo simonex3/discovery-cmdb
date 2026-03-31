@@ -190,6 +190,40 @@ def import_cis(
     return {"created": created, "updated": updated, "errors": errors}
 
 
+@router.post(
+    "/reclassify",
+    summary="Reclassify all CIs",
+    description="Re-infers ci_type for all non-retired CIs based on current host data and updates changed ones.",
+    tags=["Configuration Items"],
+)
+def reclassify_cis(db: Session = Depends(get_db), user: User = Depends(require_operator)):
+    from app.services.discovery import _infer_ci_type
+    cis = db.query(ConfigurationItem).filter(ConfigurationItem.status != "retired").all()
+    total = len(cis)
+    reclassified = 0
+    for ci in cis:
+        host = {
+            "ip": ci.ip_address,
+            "hostname": ci.hostname,
+            "vendor": ci.manufacturer if hasattr(ci, "manufacturer") else None,
+            "osmatch": [{"name": ci.os}] if ci.os else [],
+            "ports": [{"portid": str(p["port"])} for p in (ci.open_ports or [])] if ci.open_ports else [],
+        }
+        inferred = _infer_ci_type(host)
+        if inferred != ci.ci_type:
+            old_type = ci.ci_type
+            ci.ci_type = inferred
+            _log(
+                db, ci.id, "reclassified",
+                f"CI '{ci.name}' reclassified from '{old_type}' to '{inferred}'",
+                changes={"ci_type": {"old": old_type, "new": inferred}},
+                actor=user.username,
+            )
+            reclassified += 1
+    db.commit()
+    return {"reclassified": reclassified, "total": total}
+
+
 @router.get(
     "/{ci_id}",
     response_model=CIResponse,

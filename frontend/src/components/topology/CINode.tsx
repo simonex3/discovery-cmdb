@@ -37,7 +37,7 @@ const HEALTH_DOT: Record<string, string> = {
 };
 
 export default memo(function CINode({ data, selected }: NodeProps) {
-  const d = data as unknown as TopologyNodeData;
+  const d = data as unknown as TopologyNodeData & { highlighted?: boolean };
   const ts = TYPE_STYLE[d.ci_type] ?? TYPE_STYLE.other;
   const ring = HEALTH_RING[d.health_status] ?? HEALTH_RING.unknown;
   const healthDot = HEALTH_DOT[d.health_status] ?? HEALTH_DOT.unknown;
@@ -46,7 +46,7 @@ export default memo(function CINode({ data, selected }: NodeProps) {
   return (
     <div className={clsx(
       'rounded-xl overflow-hidden shadow-lg min-w-[140px] max-w-[185px] transition-all duration-150',
-      ring,
+      d.highlighted ? 'ring-2 ring-yellow-400 ring-offset-1 ring-offset-slate-950' : ring,
       ts.glow,
       selected && 'ring-2 ring-blue-400 ring-offset-1 ring-offset-slate-950',
       isDown ? 'opacity-50 grayscale' : 'hover:scale-[1.04] hover:shadow-xl',
