@@ -19,7 +19,7 @@ export default function Discovery() {
   const { data: status, refetch: refetchStatus } = useQuery({
     queryKey: ['discovery-status'],
     queryFn: () => client.get('/discovery/status').then(r => r.data),
-    refetchInterval: 5000,
+    refetchInterval: (query) => (query.state.data?.running ? 2000 : 5000),
   });
 
   const { data: settings, refetch: refetchSettings } = useQuery({
@@ -100,9 +100,24 @@ export default function Discovery() {
             <div>Completed: {status?.completed_at ? new Date(status.completed_at).toLocaleString() : '—'}</div>
             <div>Actor: {status?.actor || 'system'}</div>
           </div>
-          {status?.result && (
-            <div className="bg-slate-800 rounded-lg p-3 text-xs text-slate-300">
-              Hosts: {status.result.hosts_found} · New: {status.result.discovered_new} · Updated: {status.result.updated} · Failed: {status.result.failed}
+          {status?.running && (
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 space-y-1.5 text-xs">
+              <div className="flex items-center gap-2 text-blue-400 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                Scanning {status.cidr}
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-slate-400">
+                <div>Hosts checked: <span className="text-slate-200 font-mono">{status.hosts_processed ?? 0}</span></div>
+                <div>Found: <span className="text-slate-200 font-mono">{status.hosts_found ?? 0}</span></div>
+              </div>
+            </div>
+          )}
+          {status?.result && !status?.running && (
+            <div className="bg-slate-800 rounded-lg p-3 text-xs text-slate-300 grid grid-cols-2 gap-1">
+              <div>Hosts found: <span className="font-medium text-white">{status.result.hosts_found}</span></div>
+              <div>New: <span className="font-medium text-green-400">{status.result.discovered_new}</span></div>
+              <div>Updated: <span className="font-medium text-blue-400">{status.result.updated}</span></div>
+              <div>Failed: <span className="font-medium text-red-400">{status.result.failed}</span></div>
             </div>
           )}
         </div>

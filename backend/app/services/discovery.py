@@ -22,6 +22,8 @@ DISCOVERY_STATE: dict = {
     "actor": "system",
     "result": None,
     "error": None,
+    "hosts_processed": 0,
+    "hosts_found": 0,
 }
 
 MAC_VENDOR_PREFIXES = {
@@ -164,12 +166,21 @@ def _scan_with_nmap(cidr: str) -> list:
         nm = nmap.PortScanner()
         nm.scan(
             hosts=cidr,
-            arguments="-sn -O --osscan-guess --max-os-tries 1 -T4",
-            timeout=120,
+            arguments="-sV --osscan-guess --max-os-tries 1 -T4 --open -p 22,23,80,443,445,3389,8080,8443,8006,5000,8123,1883,9000,9090,3000,5001",
+            timeout=300,
         )
         results = []
         for host in nm.all_hosts():
             info = nm[host]
+            ports = []
+            tcp = info.get("tcp", {})
+            for port_num, port_data in tcp.items():
+                if port_data.get("state") == "open":
+                    ports.append({
+                        "port": port_num,
+                        "protocol": "tcp",
+                        "service": port_data.get("name", ""),
+                    })
             results.append({
                 "ip": host,
                 "hostname": info.hostname() or "",
@@ -177,7 +188,7 @@ def _scan_with_nmap(cidr: str) -> list:
                 "mac": info.get("addresses", {}).get("mac", ""),
                 "vendor": list(info.get("vendor", {}).values())[0] if info.get("vendor") else None,
                 "osmatch": info.get("osmatch", []),
-                "ports": [],
+                "ports": ports,
             })
         return results
     except ImportError:
@@ -307,6 +318,8 @@ class DiscoveryService:
             "actor": actor,
             "result": None,
             "error": None,
+            "hosts_processed": 0,
+            "hosts_found": 0,
         })
         discovered_new = 0
         updated = 0
@@ -318,6 +331,7 @@ class DiscoveryService:
             logger.info(f"Scan complete: {len(hosts)} hosts found")
 
             for host in hosts:
+                DISCOVERY_STATE["hosts_processed"] += 1
                 if host.get("state") != "up":
                     continue
                 try:
@@ -348,6 +362,8 @@ class DiscoveryService:
                             existing.manufacturer = vendor
                         if os_name and not existing.os:
                             existing.os = os_name
+                        if host.get("ports"):
+                            existing.open_ports = host["ports"]
                         existing.last_seen = now
                         existing.last_discovered = now
                         if existing.health_status in ("unknown", "down"):
@@ -358,6 +374,7 @@ class DiscoveryService:
                             changes=changes or None,
                         ))
                         updated += 1
+                        DISCOVERY_STATE["hosts_found"] += 1
                     else:
                         ci_type = _infer_ci_type(host)
                         name = _clean_name(hostname, ip) if hostname else ip
@@ -369,6 +386,7 @@ class DiscoveryService:
                             hostname=hostname,
                             manufacturer=vendor,
                             os=os_name,
+                            open_ports=host.get("ports") or None,
                             status="active",
                             health_status="healthy",
                             last_seen=now,
@@ -381,6 +399,7 @@ class DiscoveryService:
                             actor=actor, description=f"New CI discovered: {ip} ({ci_type})",
                         ))
                         discovered_new += 1
+                        DISCOVERY_STATE["hosts_found"] += 1
 
                     db.commit()
 

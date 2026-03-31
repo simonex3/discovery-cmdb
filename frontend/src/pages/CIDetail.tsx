@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X } from 'lucide-react';
 import client from '../api/client';
 import type { CI, Relationship, DependencyTree } from '../types';
 import { healthBadge, statusBadge } from '../components/ui/Badge';
@@ -46,6 +46,7 @@ export default function CIDetail() {
   const { id } = useParams();
   const isNew = !id || id === 'new';
   const [form, setForm] = useState<CIFormState>(EMPTY_FORM);
+  const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [relTarget, setRelTarget] = useState('');
@@ -302,7 +303,49 @@ export default function CIDetail() {
             </div>
             <div>
               <label className="label">Tags</label>
-              <input className="input" placeholder="home, core, vm" value={form.tags} onChange={e => set('tags', e.target.value)} />
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
+                  {form.tags.split(',').map(t => t.trim()).filter(Boolean).map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1 bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs px-2 py-0.5 rounded-full">
+                      {tag}
+                      <button type="button" onClick={() => {
+                        const updated = form.tags.split(',').map(t => t.trim()).filter(t => t && t !== tag);
+                        set('tags', updated.join(', '));
+                      }} className="text-blue-400 hover:text-white ml-0.5">
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                  {!form.tags.split(',').filter(t => t.trim()).length && (
+                    <span className="text-xs text-slate-600 self-center">No tags</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input className="input text-sm flex-1" placeholder="Add tag..." value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && tagInput.trim()) {
+                        e.preventDefault();
+                        const current = form.tags.split(',').map(t => t.trim()).filter(Boolean);
+                        if (!current.includes(tagInput.trim())) {
+                          set('tags', [...current, tagInput.trim()].join(', '));
+                        }
+                        setTagInput('');
+                      }
+                    }} />
+                  <button type="button" className="btn-secondary text-sm px-3"
+                    onClick={() => {
+                      if (!tagInput.trim()) return;
+                      const current = form.tags.split(',').map(t => t.trim()).filter(Boolean);
+                      if (!current.includes(tagInput.trim())) {
+                        set('tags', [...current, tagInput.trim()].join(', '));
+                      }
+                      setTagInput('');
+                    }}>
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div>
