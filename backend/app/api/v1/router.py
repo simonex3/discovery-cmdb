@@ -2,6 +2,8 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import cis, relationships, topology, discovery, servicenow, stats, audit, fritz
 from app.api.v1.endpoints.auth import router as auth_router, router_users
 from app.api.v1.endpoints.setup import router as setup_router, router_settings
+from app.api.v1.endpoints.snmp import router as snmp_router
+from app.api.v1.endpoints.vulns import router as vulns_router
 
 router = APIRouter()
 
@@ -17,3 +19,5 @@ router.include_router(servicenow.router)
 router.include_router(fritz.router)
 router.include_router(stats.router)
 router.include_router(audit.router)
+router.include_router(snmp_router)
+router.include_router(vulns_router)

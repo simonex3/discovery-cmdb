@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Radar, RefreshCw, PlayCircle } from 'lucide-react';
+import { Radar, RefreshCw, PlayCircle, Network } from 'lucide-react';
 import client from '../api/client';
 import { Badge } from '../components/ui/Badge';
 
@@ -187,6 +187,86 @@ export default function Discovery() {
             {saving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
+      </div>
+
+      {/* SNMP Discovery */}
+      <SNMPSection />
+    </div>
+  );
+}
+
+function SNMPSection() {
+  const [cidr, setCidr] = useState('');
+  const [community, setCommunity] = useState('public');
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data: snmpStatus, refetch } = useQuery({
+    queryKey: ['snmp-status'],
+    queryFn: () => client.get('/snmp/scan/status').then(r => r.data),
+    refetchInterval: (q) => (q.state.data?.running ? 2000 : 10000),
+  });
+
+  const startScan = async () => {
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await client.post('/snmp/scan', null, { params: { cidr, community } });
+      setMessage(r.data.message || 'SNMP scan gestartet');
+      refetch();
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'SNMP scan fehlgeschlagen');
+    }
+  };
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center gap-2 pb-3 border-b border-slate-800/60">
+        <div className="p-1.5 rounded-lg bg-violet-500/10 border border-violet-500/20">
+          <Network className="w-3.5 h-3.5 text-violet-400" />
+        </div>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">SNMP Discovery</h2>
+          <p className="text-xs text-slate-500">Scannt Netzwerk-Switches, Drucker und APs via SNMP v2c</p>
+        </div>
+      </div>
+
+      {snmpStatus?.running && (
+        <div className="flex items-center gap-2 text-sm text-violet-400 animate-pulse">
+          <Radar className="w-4 h-4" /> SNMP Scan läuft...
+        </div>
+      )}
+      {snmpStatus?.result && !snmpStatus.running && (
+        <div className="text-xs text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg p-2.5">
+          Fertig: {snmpStatus.result.devices_found} Geräte gefunden · {snmpStatus.result.created} neu · {snmpStatus.result.updated} aktualisiert
+        </div>
+      )}
+      {snmpStatus?.error && (
+        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2.5">{snmpStatus.error}</div>
+      )}
+
+      {error && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2.5">{error}</div>}
+      {message && <div className="text-xs text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg p-2.5">{message}</div>}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-2">
+          <label className="label">Netzwerk (CIDR)</label>
+          <input className="input" placeholder="192.168.178.0/24" value={cidr} onChange={e => setCidr(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Community String</label>
+          <input className="input" placeholder="public" value={community} onChange={e => setCommunity(e.target.value)} />
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <button
+          onClick={startScan}
+          disabled={!cidr || snmpStatus?.running}
+          className="btn-secondary text-sm flex items-center gap-2"
+        >
+          <Network className="w-4 h-4" />
+          {snmpStatus?.running ? 'Scan läuft...' : 'SNMP Scan starten'}
+        </button>
       </div>
     </div>
   );

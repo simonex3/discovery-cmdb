@@ -68,6 +68,25 @@ def determine_health(ci: ConfigurationItem) -> str:
     return "healthy"
 
 
+def _fire_webhook(db: Session, ci: ConfigurationItem) -> None:
+    """POST to configured webhook URL when a device goes down."""
+    try:
+        from app.models.user import AppSettings
+        setting = db.query(AppSettings).filter(AppSettings.key == "webhook_url").first()
+        if not setting or not setting.value:
+            return
+        import httpx, json
+        payload = {
+            "event": "device_down",
+            "ci": {"id": str(ci.id), "name": ci.name, "ip": ci.ip_address, "type": ci.ci_type},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        httpx.post(setting.value, json=payload, timeout=5)
+        logger.info(f"Webhook fired for {ci.name} down event")
+    except Exception as e:
+        logger.warning(f"Webhook failed: {e}")
+
+
 class MonitoringService:
 
     @staticmethod
@@ -89,6 +108,14 @@ class MonitoringService:
                 description=f"Health status changed: {old_status} → {new_status}",
                 changes={"health_status": {"old": old_status, "new": new_status}},
             ))
+            # Fire webhook + email if device went down or degraded
+            if new_status in ("down", "degraded"):
+                _fire_webhook(db, ci)
+                try:
+                    from app.services.notifications import notify_device_down
+                    notify_device_down(db, ci.name, ci.ip_address or "", new_status, str(ci.id))
+                except Exception as _ne:
+                    logger.warning(f"Email notification failed: {_ne}")
 
         if new_status != "down":
             ci.last_seen = now

@@ -137,6 +137,19 @@ SETTING_DEFINITIONS = {
     "fritz_sync_enabled": {"label": "FRITZ!Box Sync Enabled", "type": "boolean", "description": "Enable mesh relationship sync"},
     "fritz_last_sync": {"label": "FRITZ!Box Last Sync", "type": "string", "description": "Timestamp of last mesh sync"},
     "fritz_last_sync_result": {"label": "FRITZ!Box Last Sync Result", "type": "string", "description": "Summary of last mesh sync"},
+    # SMTP / Email notifications
+    "smtp_host": {"label": "SMTP Host", "type": "string", "description": "E-Mail SMTP server (z.B. smtp.gmail.com)"},
+    "smtp_port": {"label": "SMTP Port", "type": "integer", "description": "SMTP Port (465 für SSL, 587 für STARTTLS)"},
+    "smtp_user": {"label": "SMTP Username", "type": "string", "description": "SMTP Login-Benutzername / E-Mail"},
+    "smtp_password": {"label": "SMTP Password", "type": "secret", "description": "SMTP Passwort"},
+    "smtp_from": {"label": "Absender-Adresse", "type": "string", "description": "From-Adresse der Benachrichtigungs-E-Mails"},
+    "smtp_to": {"label": "Empfänger-Adresse", "type": "string", "description": "E-Mail-Adresse für Alerts"},
+    "smtp_tls": {"label": "SMTP SSL/TLS", "type": "boolean", "description": "SSL/TLS verwenden (true) oder STARTTLS (false)"},
+    "notify_new_devices": {"label": "Neue Geräte benachrichtigen", "type": "boolean", "description": "E-Mail senden wenn ein neues Gerät entdeckt wird"},
+    # NVD Vulnerability Scan
+    "nvd_api_key": {"label": "NVD API Key (optional)", "type": "secret", "description": "NIST NVD API Key für höheres Rate-Limit (optional)"},
+    # Dashboard widget preferences stored per-user in properties, not here
+    "webhook_url": {"label": "Webhook URL", "type": "string", "description": "POST webhook for alerts (e.g. Slack/Teams)"},
 }
 
 

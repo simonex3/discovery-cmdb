@@ -299,7 +299,7 @@ class FritzBoxService:
         if mesh_path:
             try:
                 url = urljoin(f"http://{self.host}/", mesh_path)
-                r = httpx.get(url, timeout=10)
+                r = httpx.get(url, params={"sid": sid}, timeout=10)
                 if r.status_code == 200 and r.text:
                     text = r.text.strip()
                     if text.startswith("{") or text.startswith("["):

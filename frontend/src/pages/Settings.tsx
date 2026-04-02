@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { RefreshCw, Save, Network, Router, ExternalLink, Settings as SettingsIcon, Trash2, CheckCircle } from 'lucide-react';
+import { RefreshCw, Save, Network, Router, ExternalLink, Settings as SettingsIcon, Trash2, CheckCircle, Mail, ShieldAlert, Bell } from 'lucide-react';
 import client from '../api/client';
 
 interface AppSetting {
@@ -14,7 +14,10 @@ interface AppSetting {
 const GROUPS: { label: string; icon: any; match: (k: string) => boolean }[] = [
   { label: 'Network & Discovery', icon: Network, match: k => /network_range|auto_discovery|discovery_interval|health_check/.test(k) },
   { label: 'Fritz!Box', icon: Router, match: k => /fritz/.test(k) },
-  { label: 'ServiceNow', icon: ExternalLink, match: k => /servicenow|snow/.test(k) },
+  { label: 'ServiceNow', icon: ExternalLink, match: k => /servicenow|^sn_/.test(k) },
+  { label: 'E-Mail Benachrichtigungen', icon: Mail, match: k => /^smtp_/.test(k) },
+  { label: 'Alerts & Webhooks', icon: Bell, match: k => /webhook|notify/.test(k) },
+  { label: 'Vulnerability Scan', icon: ShieldAlert, match: k => /^nvd_/.test(k) },
   { label: 'General', icon: SettingsIcon, match: () => true },
 ];
 

@@ -1,13 +1,122 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X, History } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X, History, ShieldAlert, AlertCircle } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import client from '../api/client';
 import type { CI, Relationship, DependencyTree } from '../types';
 import { healthBadge, statusBadge } from '../components/ui/Badge';
 import StatusDot from '../components/ui/StatusDot';
 import RelationshipMap from '../components/ci/RelationshipMap';
+
+const SEV_COLOR: Record<string, string> = {
+  CRITICAL: 'bg-red-600/20 text-red-400 border-red-500/40',
+  HIGH:     'bg-orange-500/20 text-orange-400 border-orange-500/40',
+  MEDIUM:   'bg-amber-500/20 text-amber-400 border-amber-500/40',
+  LOW:      'bg-blue-500/20 text-blue-400 border-blue-500/40',
+  NONE:     'bg-slate-600/20 text-slate-400 border-slate-500/40',
+  UNKNOWN:  'bg-slate-600/20 text-slate-400 border-slate-500/40',
+};
+
+function VulnSection({ ciId }: { ciId: string }) {
+  const [scanning, setScanning] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runScan = async () => {
+    setScanning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const r = await client.get(`/vulns/${ciId}`);
+      setResult(r.data);
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Scan fehlgeschlagen');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const allVulns = result
+    ? [
+        ...Object.entries(result.vulnerabilities?.by_port ?? {}).flatMap(([port, vulns]: any) =>
+          (vulns as any[]).map(v => ({ ...v, source: `Port ${port}` }))
+        ),
+        ...(result.vulnerabilities?.by_os ?? []).map((v: any) => ({ ...v, source: 'OS' })),
+      ]
+    : [];
+
+  return (
+    <div className="card space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="section-title flex items-center gap-2">
+          <ShieldAlert className="w-3.5 h-3.5 text-amber-400" /> Vulnerability Scan
+        </h3>
+        <button
+          onClick={runScan}
+          disabled={scanning}
+          className="btn-secondary text-xs flex items-center gap-1.5"
+        >
+          <ShieldAlert className="w-3.5 h-3.5" />
+          {scanning ? 'Scanning... (kann 30-60s dauern)' : 'CVE Scan starten'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2.5 flex items-center gap-2">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {error}
+        </div>
+      )}
+
+      {result && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-3 text-xs text-slate-400">
+            <span>Ports geprüft: {result.open_ports?.join(', ') || '—'}</span>
+            <span>·</span>
+            <span>CVEs gefunden: <strong className="text-slate-200">{result.vulnerabilities?.summary?.total ?? 0}</strong></span>
+            {result.vulnerabilities?.summary?.highest_severity && result.vulnerabilities.summary.highest_severity !== 'NONE' && (
+              <>
+                <span>·</span>
+                <span className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${SEV_COLOR[result.vulnerabilities.summary.highest_severity]}`}>
+                  {result.vulnerabilities.summary.highest_severity}
+                </span>
+              </>
+            )}
+          </div>
+
+          {allVulns.length === 0 ? (
+            <p className="text-slate-500 text-sm py-2">Keine relevanten CVEs gefunden.</p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {allVulns.map((v: any, i: number) => (
+                <div key={i} className="p-2.5 rounded-lg bg-slate-800/50 border border-slate-700/40 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${SEV_COLOR[v.severity] ?? SEV_COLOR.UNKNOWN}`}>
+                      {v.severity}
+                    </span>
+                    <span className="text-xs font-mono text-slate-300">{v.cve_id}</span>
+                    {v.score && <span className="text-[10px] text-slate-500">Score: {v.score}</span>}
+                    <span className="text-[10px] text-slate-600 ml-auto">{v.source} · {v.published}</span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">{v.description}</p>
+                  {v.references?.[0] && (
+                    <a href={v.references[0]} target="_blank" rel="noreferrer" className="text-[10px] text-blue-400 hover:underline truncate block">
+                      {v.references[0]}
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!result && !scanning && !error && (
+        <p className="text-xs text-slate-500">Klicke "CVE Scan starten" um offene Ports gegen die NVD-Datenbank zu prüfen.</p>
+      )}
+    </div>
+  );
+}
 
 const TYPES = ['server','router','switch','access_point','firewall','nas','vm','container','service','database','desktop','laptop','mobile','iot','printer','other'];
 const STATUSES = ['active','inactive','maintenance','retired'];
@@ -489,6 +598,9 @@ export default function CIDetail() {
           </div>
         </div>
       )}
+
+      {/* Vulnerability Scan */}
+      {!isNew && id && <VulnSection ciId={id} />}
 
       {!isNew && (
         <div className="card space-y-3">
