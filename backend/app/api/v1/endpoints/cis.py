@@ -368,7 +368,13 @@ def update_ci(
                 password=get_setting(db, "sn_password", ""),
             )
             if new_status == "maintenance":
-                asyncio.run(svc.notify_ci_maintenance(ci.name, ci.ip_address or "", ci.servicenow_sys_id))
+                change_sys_id = asyncio.run(svc.notify_ci_maintenance(ci.name, ci.ip_address or "", ci.servicenow_sys_id))
+                if change_sys_id:
+                    props = dict(ci.properties or {})
+                    props["sn_change_sys_id"] = change_sys_id
+                    ci.properties = props
+                    db.commit()
+                    db.refresh(ci)
             elif new_status == "active" and old_status == "maintenance":
                 asyncio.run(svc.notify_ci_recovered(ci.name, ci.servicenow_sys_id))
         except Exception as _sne:

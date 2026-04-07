@@ -139,22 +139,21 @@ class ServiceNowService:
             db.rollback()
             return {"error": str(e), "exported": 0}
 
-    async def notify_ci_down(self, ci_name: str, ci_ip: str, sys_id: str | None, health: str) -> None:
-        """Update operational_status in ServiceNow and create an Incident when a CI goes down."""
+    async def notify_ci_down(self, ci_name: str, ci_ip: str, sys_id: str | None, health: str) -> str | None:
+        """Update operational_status in ServiceNow and create an Incident when a CI goes down.
+        Returns the sys_id of the created Incident, or None on failure."""
         if not self.instance_url:
-            return
+            return None
         try:
             import httpx
             async with httpx.AsyncClient(auth=self._auth, timeout=10) as client:
-                # Update operational_status to Non Operational (2)
                 if sys_id:
                     await client.patch(
                         f"{self.instance_url}/api/now/table/cmdb_ci/{sys_id}",
                         json={"operational_status": "2"},
                     )
 
-                # Create Incident
-                await client.post(
+                resp = await client.post(
                     f"{self.instance_url}/api/now/table/incident",
                     json={
                         "short_description": f"CI down: {ci_name} ({ci_ip})",
@@ -168,14 +167,18 @@ class ServiceNowService:
                         "cmdb_ci": sys_id or "",
                     },
                 )
-                logger.info(f"ServiceNow notified: CI down — {ci_name} ({health})")
+                incident_sys_id = resp.json().get("result", {}).get("sys_id") if resp.status_code in (200, 201) else None
+                logger.info(f"ServiceNow notified: CI down — {ci_name} ({health}), incident={incident_sys_id}")
+                return incident_sys_id
         except Exception as e:
             logger.warning(f"ServiceNow down-notification failed for {ci_name}: {e}")
+            return None
 
-    async def notify_ci_maintenance(self, ci_name: str, ci_ip: str, sys_id: str | None) -> None:
-        """Set operational_status to Repair in Progress and create a Change Request in ServiceNow."""
+    async def notify_ci_maintenance(self, ci_name: str, ci_ip: str, sys_id: str | None) -> str | None:
+        """Set operational_status to Repair in Progress and create a Change Request in ServiceNow.
+        Returns the sys_id of the created Change Request, or None on failure."""
         if not self.instance_url:
-            return
+            return None
         try:
             import httpx
             async with httpx.AsyncClient(auth=self._auth, timeout=10) as client:
@@ -185,7 +188,7 @@ class ServiceNowService:
                         json={"operational_status": "3"},
                     )
 
-                await client.post(
+                resp = await client.post(
                     f"{self.instance_url}/api/now/table/change_request",
                     json={
                         "short_description": f"Planned maintenance: {ci_name} ({ci_ip})",
@@ -199,9 +202,12 @@ class ServiceNowService:
                         "cmdb_ci": sys_id or "",
                     },
                 )
-                logger.info(f"ServiceNow notified: maintenance started — {ci_name}")
+                change_sys_id = resp.json().get("result", {}).get("sys_id") if resp.status_code in (200, 201) else None
+                logger.info(f"ServiceNow notified: maintenance started — {ci_name}, change={change_sys_id}")
+                return change_sys_id
         except Exception as e:
             logger.warning(f"ServiceNow maintenance-notification failed for {ci_name}: {e}")
+            return None
 
     async def notify_ci_recovered(self, ci_name: str, sys_id: str | None) -> None:
         """Set operational_status back to Operational when a CI recovers."""

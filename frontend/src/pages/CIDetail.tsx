@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X, History, ShieldAlert, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Plus, RefreshCw, Link2, GitFork, X, History, ShieldAlert, AlertCircle, ExternalLink } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import client from '../api/client';
 import type { CI, Relationship, DependencyTree } from '../types';
@@ -202,6 +202,12 @@ export default function CIDetail() {
     enabled: !isNew,
   });
 
+  const { data: snConfig } = useQuery({
+    queryKey: ['sn-config'],
+    queryFn: () => client.get('/servicenow/config').then(r => r.data),
+  });
+  const snInstanceUrl: string | null = snConfig?.instance_url || null;
+
   useEffect(() => {
     if (!ci) return;
     setForm({
@@ -383,7 +389,37 @@ export default function CIDetail() {
           </div>
           <div className="card">
             <p className="text-xs text-slate-500">ServiceNow</p>
-            <p className="text-sm text-slate-200 mt-1">{ci.servicenow_sys_id ? `Linked (${ci.servicenow_sys_id})` : 'Not linked'}</p>
+            {snInstanceUrl && ci.servicenow_sys_id ? (
+              <div className="mt-1 space-y-1">
+                <a
+                  href={`${snInstanceUrl}/nav_to.do?uri=cmdb_ci.do?sys_id=${ci.servicenow_sys_id}`}
+                  target="_blank" rel="noreferrer"
+                  className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> CI in ServiceNow
+                </a>
+                {(ci.properties as any)?.sn_change_sys_id && (
+                  <a
+                    href={`${snInstanceUrl}/nav_to.do?uri=change_request.do?sys_id=${(ci.properties as any).sn_change_sys_id}`}
+                    target="_blank" rel="noreferrer"
+                    className="text-sm text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Change Request
+                  </a>
+                )}
+                {(ci.properties as any)?.sn_incident_sys_id && (
+                  <a
+                    href={`${snInstanceUrl}/nav_to.do?uri=incident.do?sys_id=${(ci.properties as any).sn_incident_sys_id}`}
+                    target="_blank" rel="noreferrer"
+                    className="text-sm text-red-400 hover:text-red-300 flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Incident
+                  </a>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500 mt-1">{ci.servicenow_sys_id ? 'Linked' : 'Not linked'}</p>
+            )}
           </div>
         </div>
       )}

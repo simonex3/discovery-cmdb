@@ -125,7 +125,12 @@ class MonitoringService:
                         username=get_setting(db, "sn_username", ""),
                         password=get_setting(db, "sn_password", ""),
                     )
-                    asyncio.run(svc.notify_ci_down(ci.name, ci.ip_address or "", ci.servicenow_sys_id, new_status))
+                    incident_sys_id = asyncio.run(svc.notify_ci_down(ci.name, ci.ip_address or "", ci.servicenow_sys_id, new_status))
+                    if incident_sys_id:
+                        props = dict(ci.properties or {})
+                        props["sn_incident_sys_id"] = incident_sys_id
+                        ci.properties = props
+                        db.commit()
                 except Exception as _sne:
                     logger.warning(f"ServiceNow down-notification failed: {_sne}")
 
