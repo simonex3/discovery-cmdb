@@ -118,6 +118,52 @@ GET /api/now/table/cmdb_ci?sysparm_limit=10&sysparm_query=status=active
 POST /api/now/table/cmdb_ci_server
 ```
 
+#### Export: API calls to create / update CIs
+
+During an export the backend iterates over all local CIs with status `active` and makes one call per CI:
+
+**New CI** (no `sys_id` stored locally) → creates a record in ServiceNow:
+
+```
+POST /api/now/table/cmdb_ci
+Authorization: Basic <base64(user:password)>
+Content-Type: application/json
+
+{
+  "name":              "<ci.name>",
+  "ip_address":        "<ci.ip_address>",
+  "mac_address":       "<ci.mac_address>",
+  "fqdn":              "<ci.fqdn>",
+  "manufacturer":      "<ci.manufacturer>",
+  "os":                "<ci.os>",
+  "short_description": "<ci.description>",
+  "u_environment":     "<ci.environment>"
+}
+```
+
+On success (HTTP 200/201) the returned `sys_id` is stored locally so subsequent exports use the update path.
+
+**Existing CI** (local `sys_id` present) → updates the record in ServiceNow:
+
+```
+PUT /api/now/table/cmdb_ci/<sys_id>
+Authorization: Basic <base64(user:password)>
+Content-Type: application/json
+
+{
+  "name":              "<ci.name>",
+  "ip_address":        "<ci.ip_address>",
+  "mac_address":       "<ci.mac_address>",
+  "fqdn":              "<ci.fqdn>",
+  "manufacturer":      "<ci.manufacturer>",
+  "os":                "<ci.os>",
+  "short_description": "<ci.description>",
+  "u_environment":     "<ci.environment>"
+}
+```
+
+> All fields default to `""` if not set on the local CI. The target table is always `cmdb_ci` (base class). If you need sub-class records (e.g. `cmdb_ci_server`) those must be created manually or via a ServiceNow Business Rule that promotes the class based on the `u_environment` or other fields.
+
 #### Required ServiceNow User Permissions
 
 The integration uses **Basic Auth** (username + password) against the ServiceNow Table API. The ServiceNow user account needs the following roles:
