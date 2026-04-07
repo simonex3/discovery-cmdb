@@ -118,6 +118,35 @@ GET /api/now/table/cmdb_ci?sysparm_limit=10&sysparm_query=status=active
 POST /api/now/table/cmdb_ci_server
 ```
 
+#### Required ServiceNow User Permissions
+
+The integration uses **Basic Auth** (username + password) against the ServiceNow Table API. The ServiceNow user account needs the following roles:
+
+| Role | Purpose |
+|---|---|
+| `rest_service` | Allows REST API access (Table API). **Required** for all operations. |
+| `itil` | Grants read and write access to CMDB tables (`cmdb_ci` and sub-classes). Covers import, export, and connection test. |
+
+> **Minimum setup:** Assign both `rest_service` and `itil` to the integration user.  
+> For read-only use (import only / connection test), `rest_service` + `cmdb_read` is sufficient.
+
+**What the integration does — and which permission covers it:**
+
+| Operation | HTTP Method | Endpoint | Required permission |
+|---|---|---|---|
+| Test connection | `GET` | `/api/now/table/cmdb_ci` | `rest_service` + `itil` (or `cmdb_read`) |
+| Import CIs from ServiceNow | `GET` | `/api/now/table/cmdb_ci` | `rest_service` + `itil` (or `cmdb_read`) |
+| Export / create CI in ServiceNow | `POST` | `/api/now/table/cmdb_ci` | `rest_service` + `itil` (or `cmdb_write`) |
+| Export / update CI in ServiceNow | `PUT` | `/api/now/table/cmdb_ci/{sys_id}` | `rest_service` + `itil` (or `cmdb_write`) |
+
+**How to create the integration user in ServiceNow:**
+
+1. Navigate to **User Administration → Users** and create a new user (e.g. `cmdb_integration`).
+2. Set a strong password and enable **Web service access only** to prevent UI logins.
+3. Open the user record and go to the **Roles** tab.
+4. Add the roles `rest_service` and `itil`.
+5. Enter the username, password, and your instance URL (e.g. `https://yourinstance.service-now.com`) in the Discovery CMDB **Settings → ServiceNow** page.
+
 ### Fritz!Box & Relationship Endpoints
 
 | Endpoint | Description |
