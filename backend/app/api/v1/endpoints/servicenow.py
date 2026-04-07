@@ -13,7 +13,7 @@ router = APIRouter(prefix="/servicenow", tags=["ServiceNow Integration"])
 class SNConfig(BaseModel):
     instance_url: str
     username: str
-    password: str
+    password: Optional[str] = None
 
 
 @router.get("/config", summary="Get ServiceNow configuration")
@@ -31,7 +31,8 @@ def save_sn_config(config: SNConfig, db: Session = Depends(get_db), _: User = De
     from app.api.v1.endpoints.setup import set_setting
     set_setting(db, "sn_instance_url", config.instance_url)
     set_setting(db, "sn_username", config.username)
-    set_setting(db, "sn_password", config.password)
+    if config.password:
+        set_setting(db, "sn_password", config.password)
     return {"message": "ServiceNow configuration saved"}
 
 
