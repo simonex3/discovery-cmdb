@@ -224,6 +224,95 @@ def reclassify_cis(db: Session = Depends(get_db), user: User = Depends(require_o
     return {"reclassified": reclassified, "total": total}
 
 
+@router.post(
+    "/{ci_id}/scan",
+    summary="Rescan a single CI",
+    description="Run a quick nmap scan on this CI's IP and update its open_ports, OS, and health status.",
+)
+def scan_single_ci(
+    ci_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_operator),
+):
+    ci = db.query(ConfigurationItem).filter(ConfigurationItem.id == ci_id).first()
+    if not ci:
+        raise HTTPException(status_code=404, detail="CI not found")
+    if not ci.ip_address:
+        raise HTTPException(status_code=400, detail="CI has no IP address")
+
+    from app.services.discovery import _scan_with_nmap
+    hosts = _scan_with_nmap(ci.ip_address)
+    if not hosts:
+        raise HTTPException(status_code=422, detail="Scan returned no results — host may be offline")
+
+    host = hosts[0]
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    changes = {}
+
+    if host.get("ports"):
+        ci.open_ports = host["ports"]
+        changes["open_ports"] = "updated"
+    osmatch = host.get("osmatch", [])
+    if osmatch and not ci.os:
+        ci.os = osmatch[0].get("name")
+        changes["os"] = ci.os
+    ci.last_seen = now
+    ci.last_discovered = now
+    ci.health_status = "healthy"
+
+    db.add(AuditLog(
+        ci_id=ci.id, action="discovered", actor=user.username,
+        description=f"Manual rescan: {len(host.get('ports', []))} ports found",
+        changes=changes or None,
+    ))
+    db.commit()
+    db.refresh(ci)
+    from app.schemas.ci import CIResponse
+    return {"ports_found": len(host.get("ports", [])), "ci": CIResponse.model_validate(ci)}
+
+
+@router.get(
+    "/{ci_id}/impact",
+    summary="Dependency impact analysis",
+    description="Returns all CIs that would be impacted if this CI went down (recursive downstream traversal).",
+)
+def get_impact(
+    ci_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_user),
+):
+    from app.models.relationship import Relationship
+    visited = set()
+    impacted = []
+
+    def traverse(cid):
+        if cid in visited:
+            return
+        visited.add(cid)
+        # Find CIs that depend ON this CI (source depends_on/hosted_on/runs_on this target)
+        rels = db.query(Relationship).filter(
+            Relationship.target_id == cid,
+            Relationship.relationship_type.in_(["depends_on", "hosted_on", "runs_on"]),
+        ).all()
+        for rel in rels:
+            peer = db.query(ConfigurationItem).filter(ConfigurationItem.id == rel.source_id).first()
+            if peer and str(peer.id) not in visited:
+                impacted.append({
+                    "id": str(peer.id),
+                    "name": peer.name,
+                    "ci_type": peer.ci_type,
+                    "ip_address": peer.ip_address,
+                    "health_status": peer.health_status,
+                    "relationship_type": rel.relationship_type,
+                    "depth": len(visited),
+                })
+                traverse(peer.id)
+
+    traverse(ci_id)
+    return {"ci_id": str(ci_id), "impacted_count": len(impacted), "impacted": impacted}
+
+
 @router.get(
     "/{ci_id}",
     response_model=CIResponse,
@@ -264,6 +353,28 @@ def update_ci(
 
     db.commit()
     db.refresh(ci)
+
+    # Notify ServiceNow on maintenance / recovery status changes
+    if "status" in changes:
+        new_status = changes["status"]["new"]
+        old_status = changes["status"]["old"]
+        try:
+            import asyncio
+            from app.services.servicenow import ServiceNowService
+            from app.api.v1.endpoints.setup import get_setting
+            svc = ServiceNowService(
+                instance_url=get_setting(db, "sn_instance_url", ""),
+                username=get_setting(db, "sn_username", ""),
+                password=get_setting(db, "sn_password", ""),
+            )
+            if new_status == "maintenance":
+                asyncio.run(svc.notify_ci_maintenance(ci.name, ci.ip_address or "", ci.servicenow_sys_id))
+            elif new_status == "active" and old_status == "maintenance":
+                asyncio.run(svc.notify_ci_recovered(ci.name, ci.servicenow_sys_id))
+        except Exception as _sne:
+            import logging
+            logging.getLogger(__name__).warning(f"ServiceNow status-notification failed: {_sne}")
+
     return ci
 
 

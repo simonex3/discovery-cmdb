@@ -116,6 +116,32 @@ class MonitoringService:
                     notify_device_down(db, ci.name, ci.ip_address or "", new_status, str(ci.id))
                 except Exception as _ne:
                     logger.warning(f"Email notification failed: {_ne}")
+                try:
+                    import asyncio
+                    from app.services.servicenow import ServiceNowService
+                    from app.api.v1.endpoints.setup import get_setting
+                    svc = ServiceNowService(
+                        instance_url=get_setting(db, "sn_instance_url", ""),
+                        username=get_setting(db, "sn_username", ""),
+                        password=get_setting(db, "sn_password", ""),
+                    )
+                    asyncio.run(svc.notify_ci_down(ci.name, ci.ip_address or "", ci.servicenow_sys_id, new_status))
+                except Exception as _sne:
+                    logger.warning(f"ServiceNow down-notification failed: {_sne}")
+
+            elif new_status == "healthy" and old_status in ("down", "degraded"):
+                try:
+                    import asyncio
+                    from app.services.servicenow import ServiceNowService
+                    from app.api.v1.endpoints.setup import get_setting
+                    svc = ServiceNowService(
+                        instance_url=get_setting(db, "sn_instance_url", ""),
+                        username=get_setting(db, "sn_username", ""),
+                        password=get_setting(db, "sn_password", ""),
+                    )
+                    asyncio.run(svc.notify_ci_recovered(ci.name, ci.servicenow_sys_id))
+                except Exception as _sne:
+                    logger.warning(f"ServiceNow recovery-notification failed: {_sne}")
 
         if new_status != "down":
             ci.last_seen = now

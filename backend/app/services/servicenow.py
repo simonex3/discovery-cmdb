@@ -139,6 +139,85 @@ class ServiceNowService:
             db.rollback()
             return {"error": str(e), "exported": 0}
 
+    async def notify_ci_down(self, ci_name: str, ci_ip: str, sys_id: str | None, health: str) -> None:
+        """Update operational_status in ServiceNow and create an Incident when a CI goes down."""
+        if not self.instance_url:
+            return
+        try:
+            import httpx
+            async with httpx.AsyncClient(auth=self._auth, timeout=10) as client:
+                # Update operational_status to Non Operational (2)
+                if sys_id:
+                    await client.patch(
+                        f"{self.instance_url}/api/now/table/cmdb_ci/{sys_id}",
+                        json={"operational_status": "2"},
+                    )
+
+                # Create Incident
+                await client.post(
+                    f"{self.instance_url}/api/now/table/incident",
+                    json={
+                        "short_description": f"CI down: {ci_name} ({ci_ip})",
+                        "description": (
+                            f"Health check detected status '{health}' for CI '{ci_name}' "
+                            f"at {ci_ip}. Automatic alert from Discovery CMDB."
+                        ),
+                        "impact": "2",
+                        "urgency": "2",
+                        "category": "network",
+                        "cmdb_ci": sys_id or "",
+                    },
+                )
+                logger.info(f"ServiceNow notified: CI down — {ci_name} ({health})")
+        except Exception as e:
+            logger.warning(f"ServiceNow down-notification failed for {ci_name}: {e}")
+
+    async def notify_ci_maintenance(self, ci_name: str, ci_ip: str, sys_id: str | None) -> None:
+        """Set operational_status to Repair in Progress and create a Change Request in ServiceNow."""
+        if not self.instance_url:
+            return
+        try:
+            import httpx
+            async with httpx.AsyncClient(auth=self._auth, timeout=10) as client:
+                if sys_id:
+                    await client.patch(
+                        f"{self.instance_url}/api/now/table/cmdb_ci/{sys_id}",
+                        json={"operational_status": "3"},
+                    )
+
+                await client.post(
+                    f"{self.instance_url}/api/now/table/change_request",
+                    json={
+                        "short_description": f"Planned maintenance: {ci_name} ({ci_ip})",
+                        "description": (
+                            f"Maintenance window started for CI '{ci_name}' at {ci_ip}. "
+                            f"Triggered automatically by Discovery CMDB."
+                        ),
+                        "type": "maintenance",
+                        "risk": "low",
+                        "impact": "2",
+                        "cmdb_ci": sys_id or "",
+                    },
+                )
+                logger.info(f"ServiceNow notified: maintenance started — {ci_name}")
+        except Exception as e:
+            logger.warning(f"ServiceNow maintenance-notification failed for {ci_name}: {e}")
+
+    async def notify_ci_recovered(self, ci_name: str, sys_id: str | None) -> None:
+        """Set operational_status back to Operational when a CI recovers."""
+        if not self.instance_url or not sys_id:
+            return
+        try:
+            import httpx
+            async with httpx.AsyncClient(auth=self._auth, timeout=10) as client:
+                await client.patch(
+                    f"{self.instance_url}/api/now/table/cmdb_ci/{sys_id}",
+                    json={"operational_status": "1"},
+                )
+                logger.info(f"ServiceNow notified: CI recovered — {ci_name}")
+        except Exception as e:
+            logger.warning(f"ServiceNow recovery-notification failed for {ci_name}: {e}")
+
     async def sync(self, db: Session, direction: str = "both", actor: str = "system") -> dict:
         result = {}
         if direction in ("import", "both"):
